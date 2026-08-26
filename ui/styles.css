@@ -63,8 +63,47 @@ button.secondary { background: #232733; }
 button:disabled { opacity: 0.5; cursor: default; }
 
 .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.rooms { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
-.rooms label { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; }
+
+.room-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.room-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  cursor: default;
+}
+.room-folders { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; min-height: 22px; }
+.folder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #1a2030;
+  border-radius: 6px;
+  padding: 3px 4px 3px 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.chip-remove {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 4px;
+  padding: 0 6px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chip-remove:hover { color: var(--err); }
+button.small { padding: 5px 10px; font-size: 12px; }
 
 table { width: 100%; border-collapse: collapse; margin-top: 10px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }

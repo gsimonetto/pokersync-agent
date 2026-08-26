@@ -1,4 +1,5 @@
 const invoke = window.__TAURI__.core.invoke;
+const openFolderDialog = window.__TAURI__.dialog.open;
 
 const el = (id) => document.getElementById(id);
 const setStatus = (id, message, kind) => {
@@ -9,10 +10,12 @@ const setStatus = (id, message, kind) => {
 
 let rooms = [];
 let selectedRooms = new Set();
+let extraFolders = {}; // slug -> string[]
 
 async function refreshConfig() {
   const cfg = await invoke("get_config");
   el("base-url").value = cfg.base_url ?? "";
+  extraFolders = cfg.extra_folders ?? {};
   if (cfg.logged_in) {
     el("login-form").classList.add("hidden");
     el("logged-in").classList.remove("hidden");
@@ -25,12 +28,65 @@ async function refreshConfig() {
   return cfg;
 }
 
+function renderRoomFolders(room) {
+  const list = document.querySelector(`.room-folders[data-slug="${room.slug}"]`);
+  if (!list) return;
+  list.innerHTML = "";
+  const folders = extraFolders[room.slug] ?? [];
+  if (folders.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "pill";
+    empty.textContent = "só pastas padrão";
+    list.appendChild(empty);
+    return;
+  }
+  for (const folder of folders) {
+    const chip = document.createElement("span");
+    chip.className = "folder-chip";
+    chip.title = folder;
+    const text = document.createElement("span");
+    text.textContent = folder.length > 42 ? "…" + folder.slice(-40) : folder;
+    const remove = document.createElement("button");
+    remove.textContent = "×";
+    remove.className = "chip-remove";
+    remove.addEventListener("click", () => removeFolder(room.slug, folder));
+    chip.appendChild(text);
+    chip.appendChild(remove);
+    list.appendChild(chip);
+  }
+}
+
+async function saveFolders(slug) {
+  await invoke("save_extra_folders", { room: slug, folders: extraFolders[slug] ?? [] });
+}
+
+async function addFolder(slug) {
+  const picked = await openFolderDialog({ directory: true, multiple: false, title: "Escolher pasta de hand history" });
+  if (!picked) return;
+  const current = extraFolders[slug] ?? [];
+  if (!current.includes(picked)) {
+    extraFolders[slug] = [...current, picked];
+    await saveFolders(slug);
+  }
+  renderRoomFolders(rooms.find((r) => r.slug === slug));
+}
+
+async function removeFolder(slug, folder) {
+  extraFolders[slug] = (extraFolders[slug] ?? []).filter((f) => f !== folder);
+  await saveFolders(slug);
+  renderRoomFolders(rooms.find((r) => r.slug === slug));
+}
+
 async function loadRooms() {
   rooms = await invoke("list_rooms");
   const container = el("rooms");
   container.innerHTML = "";
   for (const room of rooms) {
-    const label = document.createElement("label");
+    const card = document.createElement("div");
+    card.className = "room-card";
+
+    const header = document.createElement("label");
+    header.className = "room-header";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = true;
@@ -40,9 +96,24 @@ async function loadRooms() {
       else selectedRooms.delete(room.slug);
     });
     selectedRooms.add(room.slug);
-    label.appendChild(checkbox);
-    label.append(room.display_name);
-    container.appendChild(label);
+    header.appendChild(checkbox);
+    header.append(room.display_name);
+    header.title = "Pastas padrão verificadas:\n" + room.default_folders.join("\n");
+    card.appendChild(header);
+
+    const folderList = document.createElement("div");
+    folderList.className = "room-folders";
+    folderList.dataset.slug = room.slug;
+    card.appendChild(folderList);
+
+    const addBtn = document.createElement("button");
+    addBtn.className = "secondary small";
+    addBtn.textContent = "+ Adicionar pasta";
+    addBtn.addEventListener("click", () => addFolder(room.slug));
+    card.appendChild(addBtn);
+
+    container.appendChild(card);
+    renderRoomFolders(room);
   }
 }
 

@@ -4,6 +4,7 @@
   "description": "Capacidades padrão da janela do agente",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:default"
   ]
 }

@@ -20,3 +20,4 @@ scanner = { path = "../crates/scanner" }
 sync-client = { path = "../crates/sync-client" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 uuid = { version = "1", features = ["v4"] }
+tauri-plugin-dialog = "2"

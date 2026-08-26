@@ -291,6 +291,7 @@ async fn sync_now(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir().expect("sem app_config_dir");
             let config_path = config_dir.join("config.json");
