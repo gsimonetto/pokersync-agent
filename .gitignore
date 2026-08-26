@@ -1,0 +1,9 @@
+# Rust
+/target/
+/**/target/
+
+# Tauri
+/src-tauri/gen/
+
+# misc
+.DS_Store

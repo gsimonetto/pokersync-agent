@@ -2,41 +2,38 @@
 
 Agente desktop (Tauri + Rust) que varre o computador do jogador em busca de
 hand histories e torneios jogados — PokerStars, GGPoker, PartyPoker e
-888poker — e sincroniza com o PokerSync. Implementa a decisão 005
-(`POKERSYNC.md` §5) e o item 4 do backlog (§7).
+888poker — e sincroniza com o PokerSync. Implementa a decisão 005 e o item
+4 do backlog vivo do produto (ver `POKERSYNC.md` §5/§7 em
+[`gsimonetto/pokersync`](https://github.com/gsimonetto/pokersync)).
 
 ## Por que assim
 
 - **O agente não faz parsing de mão.** Isso já existe, é validado contra
   hand history real e é bilíngue (EN/PT-BR): `lib/poker/hand-parser.ts`, no
-  repo do produto. Duplicar essa lógica em Rust criaria dois parsers que
-  divergem com o tempo. O agente só encontra arquivos, evita reenviar o que
-  não mudou, e manda o texto bruto pro backend — quem parseia é o mesmo
-  código que já atende o "colar hand history" manual do Revisor.
+  repo do produto (`gsimonetto/pokersync`). Duplicar essa lógica em Rust
+  criaria dois parsers que divergem com o tempo. O agente só encontra
+  arquivos, evita reenviar o que não mudou, e manda o texto bruto pro
+  backend — quem parseia é o mesmo código que já atende o "colar hand
+  history" manual do Revisor.
 - **Tauri, não Electron.** Um watcher que roda em background o dia inteiro
   não deveria custar 150MB de RAM parado. WebView nativo do SO + Rust dá um
   binário pequeno e leve pra isso.
-- **Fica num monorepo por ora.** O ideal (mesmo padrão do motor GTO,
-  decisão 009) é um repositório próprio (`pokersync-agent`), com deploy e
-  versionamento independentes — algo que muda a versão do agente não deve
-  passar pelo pipeline do Next.js, e vice-versa. Essa sessão não conseguiu
-  criar o repositório (a integração de GitHub usada aqui não tem permissão
-  de `create_repository`); o código está isolado em `agent-desktop/` como
-  primeiro passo, pronto pra ser extraído com `git subtree split` quando o
-  repo existir.
+- **Repositório próprio.** Mesmo padrão do motor GTO (decisão 009,
+  `pokersync-solver`): algo que muda a versão do agente não deve passar
+  pelo pipeline de deploy do Next.js, e vice-versa. Extraído do repo do
+  produto via `git subtree split` (histórico preservado).
 
 ## Estrutura
 
 ```
-agent-desktop/
-  crates/
-    scanner/       # descoberta de arquivos + estado de sync (sem parsing de mão)
-    sync-client/    # cliente HTTP para /api/agent/{ping,sync}
-  src-tauri/        # shell Tauri: comandos, config local, login
-  ui/               # frontend estático (HTML/CSS/JS puro, sem bundler)
+crates/
+  scanner/        # descoberta de arquivos + estado de sync (sem parsing de mão)
+  sync-client/     # cliente HTTP para /api/agent/{ping,sync}
+src-tauri/         # shell Tauri: comandos, config local, login
+ui/                # frontend estático (HTML/CSS/JS puro, sem bundler)
 ```
 
-Do lado do produto (`app/`, `lib/`, neste mesmo repo por enquanto):
+Do lado do produto, em `gsimonetto/pokersync` (`app/`, `lib/`):
 
 - `app/api/agent/sync/route.ts` — recebe o texto bruto, autentica por
   bearer token (Supabase JWT do usuário).
@@ -80,19 +77,19 @@ os tokens pro keychain do SO (`keyring` crate) em vez de arquivo plano.
 cargo test -p scanner -p sync-client
 
 # dev com hot-reload da UI (precisa de tauri-cli: cargo install tauri-cli --locked)
-cd agent-desktop && cargo tauri dev
+cargo tauri dev
 
 # build de produção
-cd agent-desktop && cargo tauri build
+cargo tauri build
 ```
 
 Linux precisa de `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
 `libayatana-appindicator3-dev`, `librsvg2-dev` instalados (ver docs do
 Tauri v2 pra Windows/macOS).
 
-## O que falta (próximos passos, não desta sessão)
+## O que falta (próximos passos)
 
-- Repositório próprio (`pokersync-agent`) e CI de release por SO.
+- CI de release por SO (Windows/macOS/Linux).
 - Fluxo de pareamento por código em vez de email/senha; tokens no keychain
   do SO.
 - Validar `PokerRoom::default_search_paths` e `sniff` contra instalações
