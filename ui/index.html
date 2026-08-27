@@ -3,70 +3,159 @@
   <head>
     <meta charset="utf-8" />
     <title>PokerSync Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main>
-      <h1>PokerSync Agent</h1>
-      <p class="subtitle">
-        Encontra hand histories e torneios jogados no seu computador e
-        sincroniza com o PokerSync. Fechar esta janela minimiza o agente
-        para a bandeja do sistema — ele continua disponível ali, e sair de
-        verdade é pelo menu da bandeja.
-      </p>
-
-      <section class="panel" id="panel-config">
-        <h2>Conexão</h2>
-        <label for="base-url">URL do PokerSync</label>
-        <input type="text" id="base-url" placeholder="https://app.pokersync.com" />
-        <div class="row">
-          <button id="btn-save-url">Salvar URL</button>
-          <button id="btn-test" class="secondary">Testar conexão</button>
+    <!-- ============ Tela 1: login ============ -->
+    <section id="screen-login">
+      <div class="login-card">
+        <img class="login-logo" src="pokersync-logo.svg" alt="PokerSync" />
+        <div class="login-heading">
+          <h1>Agente Desktop</h1>
+          <p>Entre com a sua conta PokerSync pra começar a sincronizar.</p>
         </div>
-        <div id="config-status" class="status"></div>
-        <label class="checkbox-row">
-          <input type="checkbox" id="autostart-toggle" />
-          Iniciar automaticamente com o sistema (minimizado na bandeja)
-        </label>
-      </section>
 
-      <section class="panel" id="panel-login">
-        <h2>Conta</h2>
-        <div id="login-form">
-          <label for="email">Email</label>
-          <input type="email" id="email" />
-          <label for="password">Senha</label>
-          <input type="password" id="password" />
-          <button id="btn-login">Entrar</button>
-        </div>
-        <div id="logged-in" class="hidden">
-          <p>Conectado como <strong id="user-email"></strong> <span class="pill" id="device-name-pill"></span></p>
-          <button id="btn-logout" class="secondary">Sair</button>
-        </div>
-        <div id="login-status" class="status"></div>
-      </section>
+        <form id="login-form">
+          <div class="field">
+            <label for="email">Email</label>
+            <div class="field-input">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+              <input type="email" id="email" required autocomplete="username" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="password">Senha</label>
+            <div class="field-input">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+              <input type="password" id="password" required autocomplete="current-password" />
+              <button type="button" class="toggle-visibility" id="toggle-password" aria-label="Mostrar senha">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="15" height="15"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
 
-      <section class="panel" id="panel-scan">
-        <h2>Salas de poker</h2>
-        <p class="subtitle">
-          O agente já procura nas pastas padrão de cada sala. Se o seu
-          cliente de poker guarda o histórico em outro lugar, adicione a
-          pasta manualmente em cada sala abaixo.
+          <button type="submit" class="btn btn-primary" id="btn-login">Entrar</button>
+
+          <div class="divider"><span class="line"></span><span>ou</span><span class="line"></span></div>
+
+          <button type="button" class="btn btn-secondary btn-google" id="btn-google-login">
+            <svg width="16" height="16" viewBox="0 0 24 24">
+              <path d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.47c-.28 1.5-1.13 2.77-2.4 3.62v3h3.88c2.27-2.09 3.57-5.17 3.57-8.81z" fill="#4285F4"/>
+              <path d="M12 24c3.24 0 5.96-1.07 7.95-2.92l-3.88-3c-1.08.72-2.45 1.15-4.07 1.15-3.13 0-5.78-2.11-6.73-4.96H1.26v3.11C3.24 21.3 7.28 24 12 24z" fill="#34A853"/>
+              <path d="M5.27 14.27c-.24-.72-.38-1.49-.38-2.27s.14-1.55.38-2.27V6.62H1.26A11.97 11.97 0 000 12c0 1.94.46 3.77 1.26 5.38l4.01-3.11z" fill="#FBBC05"/>
+              <path d="M12 4.77c1.77 0 3.35.61 4.6 1.8l3.44-3.44C17.95 1.19 15.24 0 12 0 7.28 0 3.24 2.7 1.26 6.62l4.01 3.11c.95-2.85 3.6-4.96 6.73-4.96z" fill="#EA4335"/>
+            </svg>
+            <span>Continuar com Google</span>
+          </button>
+
+          <div id="login-status"></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ Tela 2: app (logado) ============ -->
+    <section id="screen-app" class="hidden">
+      <div class="topbar">
+        <img class="topbar-logo" src="pokersync-logo.svg" alt="PokerSync" />
+        <div class="topbar-right">
+          <div class="account-chip">
+            <span class="avatar" id="account-avatar">?</span>
+            <span>Conectado como <strong id="user-email"></strong></span>
+          </div>
+          <button class="btn-icon" id="btn-settings" aria-label="Configurações" title="Configurações">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="value-block">
+        <h2>O robô que garante que nenhuma mão fique de fora</h2>
+        <p>
+          O PokerSync Agent roda no seu computador e mantém seu histórico de mãos
+          sempre sincronizado com a plataforma — sem copiar e colar hand history,
+          sem esquecer de importar depois de uma sessão longa.
         </p>
-        <div id="rooms"></div>
-        <div class="row">
-          <button id="btn-scan" class="secondary">Buscar no computador</button>
-          <button id="btn-sync">Sincronizar agora</button>
+        <div class="value-grid">
+          <div class="value-item">
+            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span>
+            <div>
+              <h3>Varredura automática</h3>
+              <p>Encontra sozinho o histórico de cada sala instalada, sem você caçar pasta por pasta.</p>
+            </div>
+          </div>
+          <div class="value-item">
+            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></span>
+            <div>
+              <h3>Sincronização contínua</h3>
+              <p>Toda sessão nova vira dado pronto pra revisão — o agente só envia o que mudou desde a última vez.</p>
+            </div>
+          </div>
+          <div class="value-item">
+            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></span>
+            <div>
+              <h3>Evolução conectada</h3>
+              <p>Alimenta o Revisor de Mãos, os leaks e as sugestões de treino do PokerSync — sem esforço extra.</p>
+            </div>
+          </div>
         </div>
-        <table id="results-table" class="hidden">
-          <thead>
-            <tr><th>Sala</th><th>Arquivos encontrados</th><th>Pendentes</th></tr>
-          </thead>
-          <tbody id="results-body"></tbody>
-        </table>
-        <div id="scan-status" class="status"></div>
-      </section>
-    </main>
+      </div>
+
+      <div class="section-heading"><h2>Salas de poker</h2></div>
+      <div id="rooms"></div>
+
+      <div class="actions-row">
+        <button id="btn-scan" class="btn btn-secondary btn-sm">Buscar no computador</button>
+        <button id="btn-sync" class="btn btn-primary btn-sm">Sincronizar agora</button>
+        <div id="scan-status" class="status-msg"></div>
+      </div>
+      <table id="results-table" class="results-table hidden">
+        <thead><tr><th>Sala</th><th>Arquivos</th><th>Status</th></tr></thead>
+        <tbody id="results-body"></tbody>
+      </table>
+
+      <div id="settings-panel" class="hidden">
+        <h2>Configurações avançadas</h2>
+
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Iniciar com o sistema</div>
+            <div class="settings-row-hint">Abre minimizado na bandeja ao ligar o computador.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="autostart-toggle" /><span class="slider"></span></label>
+        </div>
+
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Nome deste computador</div>
+            <div class="settings-row-hint">Como ele aparece na sua conta PokerSync.</div>
+          </div>
+          <input type="text" id="device-name-input" />
+        </div>
+
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">URL do PokerSync</div>
+            <div class="settings-row-hint">Só mude isso se souber o que está fazendo (ex.: ambiente de teste).</div>
+          </div>
+          <input type="text" id="base-url" />
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">Testar conexão</div>
+          <button id="btn-test" class="btn btn-ghost btn-sm">Testar</button>
+        </div>
+
+        <div id="config-status" class="status-msg"></div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">Sair da conta</div>
+          <button id="btn-logout" class="btn btn-ghost btn-sm">Sair</button>
+        </div>
+      </div>
+    </section>
 
     <script src="app.js"></script>
   </body>

@@ -1,8 +1,10 @@
 //! Login do agente contra o GoTrue do Supabase (mesma auth usada pelo
-//! produto web) via password grant. O agente é first-party — pedir
-//! email/senha aqui é razoável pra v1; um fluxo de pareamento por código
-//! (gerado na tela /time do produto) é o passo natural seguinte e evita
-//! guardar a senha em qualquer momento (nunca é persistida, só os tokens).
+//! produto web). Dois caminhos: email/senha via password grant aqui
+//! embaixo, ou Google — que não roda dentro da janela nativa do Tauri,
+//! então abre no navegador do sistema (ver `lib.rs::start_google_login`)
+//! e volta pelo deep link `pokersync-agent://auth`. Em nenhum dos dois a
+//! senha do usuário passa por aqui além do POST direto ao GoTrue; só os
+//! tokens resultantes são guardados (no keychain, ver `keychain.rs`).
 
 use crate::config::{SUPABASE_ANON_KEY, SUPABASE_URL};
 use serde::Deserialize;
@@ -85,4 +87,23 @@ pub async fn refresh_session(refresh_token: &str) -> Result<LoginResult, String>
         refresh_token: session.refresh_token,
         email: session.user.email,
     })
+}
+
+/// O deep link de volta do login com Google (ver `lib.rs`) só traz os
+/// tokens — busca o email aqui pra exibir "Conectado como ..." na UI,
+/// igual ao fluxo de email/senha.
+pub async fn fetch_user_email(access_token: &str) -> Option<String> {
+    let client = reqwest::Client::new();
+    let url = format!("{SUPABASE_URL}/auth/v1/user");
+    let resp = client
+        .get(url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json::<GoTrueUser>().await.ok()?.email
 }

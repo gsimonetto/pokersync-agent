@@ -22,4 +22,8 @@ sync-client = { path = "../crates/sync-client" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 uuid = { version = "1", features = ["v4"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-opener = "2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+rand = "0.8"
+url = "2"

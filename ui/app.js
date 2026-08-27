@@ -1,32 +1,142 @@
 const invoke = window.__TAURI__.core.invoke;
 const openFolderDialog = window.__TAURI__.dialog.open;
+const listen = window.__TAURI__.event.listen;
 
 const el = (id) => document.getElementById(id);
-const setStatus = (id, message, kind) => {
-  const node = el(id);
-  node.textContent = message ?? "";
-  node.className = "status" + (kind ? " " + kind : "");
+
+// Cores de acento — do próprio design system do PokerSync (não são as
+// cores de marca de cada sala; ver decisão em ui/README caso exista).
+// Cada sala recebe um acento fixo só pra diferenciar visualmente os
+// cards, com um badge de iniciais no lugar de logotipos de terceiros.
+const ROOM_STYLE = {
+  pokerstars: { initials: "PS", accent: "#3b82f6" },
+  ggpoker: { initials: "GG", accent: "#f59e0b" },
+  partypoker: { initials: "PP", accent: "#a855f7" },
+  "888poker": { initials: "888", accent: "#22c55e" },
 };
+
+function setStatus(node, message, kind) {
+  node.innerHTML = "";
+  if (!message) return;
+  const icon =
+    kind === "err"
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>'
+      : kind === "ok"
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m22 4-10 10-3-3"/></svg>'
+        : "";
+  node.className = "status-msg" + (kind ? " " + kind : "");
+  node.innerHTML = icon + `<span>${message}</span>`;
+}
 
 let rooms = [];
 let selectedRooms = new Set();
-let extraFolders = {}; // slug -> string[]
+let extraFolders = {};
+
+function showScreen(loggedIn) {
+  el("screen-login").classList.toggle("hidden", loggedIn);
+  el("screen-app").classList.toggle("hidden", !loggedIn);
+}
 
 async function refreshConfig() {
   const cfg = await invoke("get_config");
   el("base-url").value = cfg.base_url ?? "";
+  el("device-name-input").value = cfg.device_name ?? "";
   extraFolders = cfg.extra_folders ?? {};
+  showScreen(cfg.logged_in);
   if (cfg.logged_in) {
-    el("login-form").classList.add("hidden");
-    el("logged-in").classList.remove("hidden");
     el("user-email").textContent = cfg.user_email ?? "(sem email)";
-    el("device-name-pill").textContent = cfg.device_name ?? "";
-  } else {
-    el("login-form").classList.remove("hidden");
-    el("logged-in").classList.add("hidden");
+    el("account-avatar").textContent = (cfg.user_email ?? "?").trim().charAt(0).toUpperCase();
   }
   return cfg;
 }
+
+// ---------- Login (email/senha) ----------
+
+el("toggle-password").addEventListener("click", () => {
+  const input = el("password");
+  input.type = input.type === "password" ? "text" : "password";
+});
+
+el("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = el("login-status");
+  setStatus(status, "Entrando...");
+  try {
+    await invoke("login", { email: el("email").value, password: el("password").value });
+    setStatus(status, "", null);
+    await refreshConfig();
+    await refreshAutostart();
+    await loadRooms();
+  } catch (err) {
+    setStatus(status, String(err), "err");
+  }
+});
+
+// ---------- Login com Google (abre o navegador do sistema) ----------
+
+el("btn-google-login").addEventListener("click", async () => {
+  const status = el("login-status");
+  setStatus(status, "Abrindo o navegador...");
+  try {
+    await invoke("start_google_login");
+  } catch (err) {
+    setStatus(status, String(err), "err");
+  }
+});
+
+listen("google-login-result", async (event) => {
+  const status = el("login-status");
+  if (event.payload?.ok) {
+    setStatus(status, "", null);
+    await refreshConfig();
+    await refreshAutostart();
+    await loadRooms();
+  } else {
+    setStatus(status, event.payload?.error ?? "Não foi possível entrar com o Google.", "err");
+  }
+});
+
+// ---------- Configurações avançadas ----------
+
+el("btn-settings").addEventListener("click", () => {
+  el("settings-panel").classList.toggle("hidden");
+});
+
+el("device-name-input").addEventListener("change", async (e) => {
+  try {
+    await invoke("save_device_name", { deviceName: e.target.value });
+  } catch (err) {
+    setStatus(el("config-status"), String(err), "err");
+  }
+});
+
+el("base-url").addEventListener("change", async (e) => {
+  try {
+    await invoke("save_base_url", { baseUrl: e.target.value });
+    await refreshConfig();
+    setStatus(el("config-status"), "URL salva.", "ok");
+  } catch (err) {
+    setStatus(el("config-status"), String(err), "err");
+  }
+});
+
+el("btn-test").addEventListener("click", async () => {
+  const status = el("config-status");
+  setStatus(status, "Testando...");
+  try {
+    const msg = await invoke("test_connection");
+    setStatus(status, msg, "ok");
+  } catch (err) {
+    setStatus(status, String(err), "err");
+  }
+});
+
+el("btn-logout").addEventListener("click", async () => {
+  await invoke("logout");
+  el("email").value = "";
+  el("password").value = "";
+  await refreshConfig();
+});
 
 async function refreshAutostart() {
   el("autostart-toggle").checked = await invoke("get_autostart");
@@ -38,9 +148,11 @@ el("autostart-toggle").addEventListener("change", async (e) => {
     await invoke("set_autostart", { enabled });
   } catch (err) {
     e.target.checked = !enabled;
-    setStatus("config-status", String(err), "err");
+    setStatus(el("config-status"), String(err), "err");
   }
 });
+
+// ---------- Salas ----------
 
 function renderRoomFolders(room) {
   const list = document.querySelector(`.room-folders[data-slug="${room.slug}"]`);
@@ -49,7 +161,7 @@ function renderRoomFolders(room) {
   const folders = extraFolders[room.slug] ?? [];
   if (folders.length === 0) {
     const empty = document.createElement("span");
-    empty.className = "pill";
+    empty.className = "folder-chip empty";
     empty.textContent = "só pastas padrão";
     list.appendChild(empty);
     return;
@@ -59,7 +171,7 @@ function renderRoomFolders(room) {
     chip.className = "folder-chip";
     chip.title = folder;
     const text = document.createElement("span");
-    text.textContent = folder.length > 42 ? "…" + folder.slice(-40) : folder;
+    text.textContent = folder.length > 34 ? "…" + folder.slice(-32) : folder;
     const remove = document.createElement("button");
     remove.textContent = "×";
     remove.className = "chip-remove";
@@ -95,24 +207,44 @@ async function loadRooms() {
   rooms = await invoke("list_rooms");
   const container = el("rooms");
   container.innerHTML = "";
+  container.className = "rooms-grid";
+
   for (const room of rooms) {
+    const style = ROOM_STYLE[room.slug] ?? { initials: room.display_name.slice(0, 2).toUpperCase(), accent: "#3b82f6" };
+
     const card = document.createElement("div");
     card.className = "room-card";
+    card.style.setProperty("--acc", style.accent);
+    card.dataset.slug = room.slug;
 
-    const header = document.createElement("label");
+    const header = document.createElement("div");
     header.className = "room-header";
+
+    const badge = document.createElement("div");
+    badge.className = "room-badge";
+    badge.textContent = style.initials;
+    header.appendChild(badge);
+
+    const nameWrap = document.createElement("div");
+    nameWrap.className = "room-name-wrap";
+    nameWrap.innerHTML = `<div class="room-name">${room.display_name}</div>`;
+    header.appendChild(nameWrap);
+
+    const toggleWrap = document.createElement("label");
+    toggleWrap.className = "room-toggle";
+    toggleWrap.title = "Incluir na busca/sincronização";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = true;
-    checkbox.dataset.slug = room.slug;
+    selectedRooms.add(room.slug);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) selectedRooms.add(room.slug);
       else selectedRooms.delete(room.slug);
+      card.classList.toggle("is-off", !checkbox.checked);
     });
-    selectedRooms.add(room.slug);
-    header.appendChild(checkbox);
-    header.append(room.display_name);
-    header.title = "Pastas padrão verificadas:\n" + room.default_folders.join("\n");
+    toggleWrap.appendChild(checkbox);
+    header.appendChild(toggleWrap);
+
     card.appendChild(header);
 
     const folderList = document.createElement("div");
@@ -121,103 +253,85 @@ async function loadRooms() {
     card.appendChild(folderList);
 
     const addBtn = document.createElement("button");
-    addBtn.className = "secondary small";
+    addBtn.className = "btn btn-ghost btn-sm";
     addBtn.textContent = "+ Adicionar pasta";
     addBtn.addEventListener("click", () => addFolder(room.slug));
     card.appendChild(addBtn);
+
+    const scanStatus = document.createElement("div");
+    scanStatus.className = "room-scan-status";
+    scanStatus.dataset.slug = room.slug;
+    card.appendChild(scanStatus);
 
     container.appendChild(card);
     renderRoomFolders(room);
   }
 }
 
-function renderResults(rows, columns) {
+function roomScanStatusEl(slug) {
+  return document.querySelector(`.room-scan-status[data-slug="${slug}"]`);
+}
+
+function renderResults(rows) {
   const table = el("results-table");
   const body = el("results-body");
   body.innerHTML = "";
   for (const row of rows) {
     const tr = document.createElement("tr");
-    for (const col of columns) {
-      const td = document.createElement("td");
-      td.textContent = row[col] ?? "";
-      tr.appendChild(td);
-    }
+    tr.innerHTML = `<td>${row.room}</td><td>${row.files}</td><td>${row.detail}</td>`;
     body.appendChild(tr);
   }
   table.classList.toggle("hidden", rows.length === 0);
 }
 
-el("btn-save-url").addEventListener("click", async () => {
-  try {
-    await invoke("save_base_url", { baseUrl: el("base-url").value });
-    await refreshConfig(); // reflete a URL normalizada (ex.: https:// completado)
-    setStatus("config-status", "URL salva.", "ok");
-  } catch (e) {
-    setStatus("config-status", String(e), "err");
-  }
-});
-
-el("btn-test").addEventListener("click", async () => {
-  setStatus("config-status", "Testando...");
-  try {
-    const msg = await invoke("test_connection");
-    setStatus("config-status", msg, "ok");
-  } catch (e) {
-    setStatus("config-status", String(e), "err");
-  }
-});
-
-el("btn-login").addEventListener("click", async () => {
-  setStatus("login-status", "Entrando...");
-  try {
-    await invoke("login", { email: el("email").value, password: el("password").value });
-    setStatus("login-status", "Login OK.", "ok");
-    await refreshConfig();
-  } catch (e) {
-    setStatus("login-status", String(e), "err");
-  }
-});
-
-el("btn-logout").addEventListener("click", async () => {
-  await invoke("logout");
-  await refreshConfig();
-});
-
 el("btn-scan").addEventListener("click", async () => {
-  setStatus("scan-status", "Buscando hand histories no computador...");
+  const status = el("scan-status");
+  setStatus(status, "Buscando hand histories no computador...");
+  document.querySelectorAll(".room-scan-status").forEach((n) => (n.textContent = ""));
   try {
     const summaries = await invoke("scan_preview", { rooms: Array.from(selectedRooms) });
     renderResults(
-      summaries.map((s) => ({ room: s.room, files_found: s.files_found, files_pending: s.files_pending })),
-      ["room", "files_found", "files_pending"]
+      summaries.map((s) => ({
+        room: rooms.find((r) => r.slug === s.room)?.display_name ?? s.room,
+        files: s.files_found,
+        detail: s.files_pending > 0 ? `${s.files_pending} novo(s)/alterado(s)` : "tudo sincronizado",
+      }))
     );
+    for (const s of summaries) {
+      const node = roomScanStatusEl(s.room);
+      if (!node) continue;
+      node.textContent = s.files_pending > 0 ? `${s.files_pending} arquivo(s) pendente(s)` : `${s.files_found} arquivo(s), em dia`;
+      node.classList.toggle("has-pending", s.files_pending > 0);
+    }
     const total = summaries.reduce((acc, s) => acc + s.files_pending, 0);
-    setStatus("scan-status", `Busca concluída — ${total} arquivo(s) novo(s) ou alterado(s).`, "ok");
-  } catch (e) {
-    setStatus("scan-status", String(e), "err");
+    setStatus(status, `Busca concluída — ${total} arquivo(s) novo(s) ou alterado(s).`, "ok");
+  } catch (err) {
+    setStatus(status, String(err), "err");
   }
 });
 
 el("btn-sync").addEventListener("click", async () => {
-  setStatus("scan-status", "Sincronizando...");
+  const status = el("scan-status");
+  setStatus(status, "Sincronizando...");
   try {
     const summaries = await invoke("sync_now", { rooms: Array.from(selectedRooms) });
     renderResults(
       summaries.map((s) => ({
-        room: s.room,
-        files_found: s.files_synced,
-        files_pending: `${s.imported} novas, ${s.duplicates} duplicadas, ${s.errors} c/ erro`,
-      })),
-      ["room", "files_found", "files_pending"]
+        room: rooms.find((r) => r.slug === s.room)?.display_name ?? s.room,
+        files: s.files_synced,
+        detail: `${s.imported} nova(s), ${s.duplicates} duplicada(s), ${s.errors} c/ erro`,
+      }))
     );
-    setStatus("scan-status", "Sincronização concluída.", "ok");
-  } catch (e) {
-    setStatus("scan-status", String(e), "err");
+    setStatus(status, "Sincronização concluída.", "ok");
+  } catch (err) {
+    setStatus(status, String(err), "err");
   }
 });
 
 (async function init() {
-  await refreshConfig();
-  await refreshAutostart();
-  await loadRooms();
+  const cfg = await refreshConfig();
+  if (cfg.logged_in) {
+    await refreshAutostart();
+    await loadRooms();
+  }
 })();

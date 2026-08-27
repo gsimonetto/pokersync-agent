@@ -63,23 +63,45 @@ Do lado do produto, em `gsimonetto/pokersync` (`app/`, `lib/`):
 
 ## Autenticação
 
-V1 pede email/senha diretamente no agente (mesmo GoTrue do produto web) —
-a senha nunca é persistida. Os tokens resultantes (access + refresh) ficam
-no keychain nativo do SO (`keychain.rs`, via crate `keyring`: Windows
+Dois caminhos, ambos contra o mesmo GoTrue do produto web:
+
+- **Email/senha**: direto na janela do agente. A senha nunca é persistida.
+- **Google**: o OAuth do Google não roda dentro da webview embutida do
+  Tauri (Google bloqueia login em iframes/webviews embutidas por
+  política de segurança) — o botão "Continuar com Google" abre o
+  **navegador do sistema** numa página dedicada do produto
+  (`gsimonetto/pokersync`, `app/agent-login/`), que faz o OAuth normal e
+  devolve os tokens pro agente via deep link (`pokersync-agent://auth`,
+  registrado pelo instalador — `tauri-plugin-deep-link`). Isso resolve o
+  caso relatado de "logou pelo Google, a senha não pega aqui" — quem
+  criou a conta assim nunca teve senha no Supabase pra começar.
+  Um nonce (`state`) gerado antes de abrir o navegador e conferido na
+  volta impede que um deep link de outra origem seja aceito como se
+  fosse resposta desse login.
+
+Em ambos os casos, os tokens resultantes (access + refresh) ficam no
+keychain nativo do SO (`keychain.rs`, via crate `keyring`: Windows
 Credential Manager, macOS Keychain, Secret Service no Linux) — nunca em
 disco em texto plano. O resto da config (URL, device, pastas) não é
-segredo e continua em `config.json`. Próximo passo natural: trocar
-email/senha por um fluxo de pareamento por código de uso único, gerado em
-`/time` no produto.
+segredo e continua em `config.json`. Próximo passo natural: um fluxo de
+pareamento por código de uso único (sem precisar de email/senha nem
+depender do navegador do sistema), gerado em `/time` no produto.
+
+## URL do PokerSync
+
+O domínio de produção (`DEFAULT_BASE_URL` em `config.rs`) vem embutido no
+binário — o jogador nunca vê nem precisa configurar isso. O campo "URL do
+PokerSync" só existe dentro de "Configurações avançadas" (escondido por
+padrão), pra depuração (ambiente de teste, self-host).
 
 ## Bandeja do sistema e início automático
 
 Fechar a janela minimiza pra bandeja em vez de encerrar o processo — o
 agente é feito pra ficar rodando em background. O menu da bandeja (ícone
 perto do relógio) tem "Mostrar" e "Sair" — só "Sair" encerra de verdade. O
-toggle "Iniciar automaticamente com o sistema" na tela de Conexão liga o
-autostart do SO (`tauri-plugin-autostart`); quando o SO abre o app sozinho
-no login, ele já nasce minimizado na bandeja (flag `--hidden`).
+toggle "Iniciar automaticamente com o sistema" em Configurações avançadas
+liga o autostart do SO (`tauri-plugin-autostart`); quando o SO abre o app
+sozinho no login, ele já nasce minimizado na bandeja (flag `--hidden`).
 
 ## Rodando localmente
 
@@ -98,9 +120,28 @@ Linux precisa de `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
 `libayatana-appindicator3-dev`, `librsvg2-dev` instalados (ver docs do
 Tauri v2 pra Windows/macOS).
 
+## Identidade visual
+
+`ui/` usa os mesmos tokens do produto web (`app/globals.css` em
+`gsimonetto/pokersync`): fundo `--void` (#000), cards `--surface`/
+`--elevated`, tipografia Space Grotesk, e a mesma paleta de acentos por
+módulo (`--positive`/`--negative`/`--training`/`--evolution`/`--review`).
+O logo (`pokersync-logo.svg`) é o arquivo real do produto, copiado pra cá.
+
+**Badges das salas**: não são os logotipos oficiais de PokerStars/GGPoker/
+PartyPoker/888poker — são iniciais num badge colorido, usando só as cores
+do próprio design system do PokerSync (`ROOM_STYLE` em `ui/app.js`), não
+as cores de marca de cada operadora. Decisão deliberada: fabricar de
+memória um logotipo de terceiro é arriscado (fica errado, ou levanta
+questão de uso de marca sem aprovação) — os badges atuais são um
+placeholder honesto até alguém do time aprovar os assets oficiais de
+cada sala pra substituir.
+
 ## O que falta (próximos passos)
 
-- Fluxo de pareamento por código em vez de email/senha.
+- Trocar os badges de iniciais pelos logotipos oficiais de cada sala
+  (precisa dos assets aprovados — ver "Identidade visual" acima).
+- Fluxo de pareamento por código em vez de email/senha/Google.
 - Validar `PokerRoom::default_search_paths` e `sniff` contra instalações
   reais de GGPoker, PartyPoker e 888poker (hoje só PokerStars e GGPoker têm
   parser validado no backend — ver `validateParsedHand` em

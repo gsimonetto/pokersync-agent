@@ -10,13 +10,20 @@ use std::sync::Mutex;
 use sync_client::{chunk_files, DeviceInfo, SyncClient, SyncFile, DEFAULT_BATCH_SIZE};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_opener::OpenerExt;
 
 struct AppState {
     config_path: PathBuf,
     state_dir: PathBuf,
     config: Mutex<AppConfig>,
+    /// Nonce do login com Google em andamento (gerado em
+    /// `start_google_login`, conferido quando o deep link volta) —
+    /// protege contra um deep link de origem estranha ser aceito como se
+    /// fosse resposta de um login que o agente pediu.
+    pending_google_state: Mutex<Option<String>>,
 }
 
 #[derive(serde::Serialize)]
@@ -99,6 +106,77 @@ async fn login(
     cfg.user_email = result.email;
     cfg.save(&state.config_path).map_err(|e| e.to_string())?;
     Ok(config_dto(&cfg))
+}
+
+/// Abre o navegador do sistema na tela de login do agente (Google não
+/// funciona dentro da webview embutida). O resultado volta assíncrono,
+/// pelo deep link `pokersync-agent://auth` — ver `handle_deep_link`.
+#[tauri::command]
+fn start_google_login(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    use rand::Rng;
+    let nonce: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect();
+    *state.pending_google_state.lock().unwrap() = Some(nonce.clone());
+
+    let (base_url, device_name) = {
+        let cfg = state.config.lock().unwrap();
+        (cfg.base_url.clone(), cfg.device_name.clone())
+    };
+    let mut url = url::Url::parse(&format!("{base_url}/agent-login"))
+        .map_err(|e| format!("URL do PokerSync inválida: {e}"))?;
+    url.query_pairs_mut()
+        .append_pair("state", &nonce)
+        .append_pair("device", &device_name);
+
+    app.opener()
+        .open_url(url.to_string(), None::<&str>)
+        .map_err(|e| format!("Não consegui abrir o navegador: {e}"))
+}
+
+/// Chamado pelo handler de deep link (`run()`) quando
+/// `pokersync-agent://auth?...` volta do login com Google. Confere o
+/// nonce, resolve o email do token e salva a sessão — mesmo destino final
+/// de `login()` (email/senha), só que assíncrono e sem senha nenhuma
+/// passando pelo agente.
+async fn complete_google_login(app: AppHandle, access_token: String, refresh_token: String, received_state: String) {
+    let state = app.state::<AppState>();
+    let state_matches = {
+        let mut pending = state.pending_google_state.lock().unwrap();
+        let matches = pending.as_deref() == Some(received_state.as_str()) && !received_state.is_empty();
+        if matches {
+            *pending = None;
+        }
+        matches
+    };
+    if !state_matches {
+        let _ = app.emit(
+            "google-login-result",
+            serde_json::json!({ "ok": false, "error": "Login não corresponde ao que o agente pediu — tente de novo." }),
+        );
+        return;
+    }
+
+    let email = auth::fetch_user_email(&access_token).await;
+
+    if let Err(e) = keychain::save(&Tokens { access_token, refresh_token }) {
+        let _ = app.emit("google-login-result", serde_json::json!({ "ok": false, "error": e }));
+        return;
+    }
+
+    {
+        let mut cfg = state.config.lock().unwrap();
+        cfg.user_email = email;
+        let _ = cfg.save(&state.config_path);
+    }
+
+    let _ = app.emit("google-login-result", serde_json::json!({ "ok": true }));
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
 }
 
 #[tauri::command]
@@ -321,6 +399,8 @@ async fn sync_now(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             // Argumento passado quando o SO abre o app sozinho no login —
@@ -337,6 +417,31 @@ pub fn run() {
                 config_path,
                 state_dir,
                 config: Mutex::new(config),
+                pending_google_state: Mutex::new(None),
+            });
+
+            // Login com Google: pokersync-agent://auth?access_token=...
+            // volta aqui depois do navegador do sistema completar o OAuth
+            // (ver start_google_login e app/agent-login no produto).
+            let deep_link_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    if url.scheme() != "pokersync-agent" || url.host_str() != Some("auth") {
+                        continue;
+                    }
+                    let params: std::collections::HashMap<String, String> =
+                        url.query_pairs().into_owned().collect();
+                    let (Some(access_token), Some(refresh_token)) =
+                        (params.get("access_token").cloned(), params.get("refresh_token").cloned())
+                    else {
+                        continue;
+                    };
+                    let received_state = params.get("state").cloned().unwrap_or_default();
+                    let handle = deep_link_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        complete_google_login(handle, access_token, refresh_token, received_state).await;
+                    });
+                }
             });
 
             let show_i = MenuItem::with_id(app, "show", "Mostrar", true, None::<&str>)?;
@@ -384,6 +489,7 @@ pub fn run() {
             save_device_name,
             save_extra_folders,
             login,
+            start_google_login,
             logout,
             test_connection,
             list_rooms,

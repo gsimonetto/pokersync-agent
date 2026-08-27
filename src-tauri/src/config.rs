@@ -14,11 +14,15 @@ use std::path::Path;
 pub const SUPABASE_URL: &str = "https://olgziujndtlvxegcnaoq.supabase.co";
 pub const SUPABASE_ANON_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sZ3ppdWpuZHRsdnhlZ2NuYW9xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxNjExMDYsImV4cCI6MjEwMDczNzEwNn0.NspOVPJcZ_pjodnDTHzalDIcjVkqoR6YVfwiN4MpBbY";
 
+/// Domínio de produção do PokerSync — o jogador nunca precisa digitar
+/// isso. Só existe um campo de URL na UI dentro de "Configurações
+/// avançadas", pra depuração (staging, self-host); o fluxo normal nem
+/// mostra essa tela.
+pub const DEFAULT_BASE_URL: &str = "https://www.pokersync.com.br";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// URL do produto PokerSync (onde /api/agent/* responde). Sem default
-    /// de produção porque não é conhecida deste crate — configurada na UI.
-    #[serde(default)]
+    #[serde(default = "default_base_url")]
     pub base_url: String,
     #[serde(default)]
     pub user_email: Option<String>,
@@ -32,6 +36,10 @@ pub struct AppConfig {
     /// (slug de PokerRoom) — somam-se aos caminhos padrão do SO.
     #[serde(default)]
     pub extra_folders: HashMap<String, Vec<String>>,
+}
+
+fn default_base_url() -> String {
+    DEFAULT_BASE_URL.to_string()
 }
 
 fn new_device_id() -> String {
@@ -51,7 +59,7 @@ fn hostname() -> String {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            base_url: String::new(),
+            base_url: default_base_url(),
             user_email: None,
             device_id: new_device_id(),
             device_name: default_device_name(),
