@@ -2,8 +2,13 @@ name: Release
 
 # Gera os instaladores do PokerSync Agent por SO e publica como GitHub
 # Release (draft) com os binários anexados — o jeito mais simples de testar
-# sem precisar instalar Rust/Tauri localmente. Disparo manual (Actions ->
-# Release -> Run workflow) ou por tag "v*".
+# sem precisar instalar Rust/Tauri localmente.
+#
+# Disparo manual (Actions -> Release -> Run workflow): usa a versão que
+# estiver commitada em src-tauri/tauri.conf.json (bom pra builds de teste).
+# Disparo por push de tag "vX.Y.Z": a versão do bundle é sincronizada com a
+# tag antes do build, então "git tag v0.2.0 && git push --tags" já gera a
+# release certa sem precisar editar tauri.conf.json antes.
 on:
   workflow_dispatch:
   push:
@@ -35,6 +40,18 @@ jobs:
 
       - name: Cache do cargo
         uses: Swatinem/rust-cache@v2
+
+      # Só quando disparado por push de tag "vX.Y.Z" — sincroniza a versão
+      # do bundle com a tag, em vez de sempre usar o que está commitado em
+      # tauri.conf.json (que é o que acontece num disparo manual/teste).
+      - name: Versiona pela tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp
+          mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
+          echo "Versão do bundle: $VERSION"
 
       - uses: tauri-apps/tauri-action@v0
         env:
