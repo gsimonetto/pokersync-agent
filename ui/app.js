@@ -150,6 +150,7 @@ function renderResults(rows, columns) {
 el("btn-save-url").addEventListener("click", async () => {
   try {
     await invoke("save_base_url", { baseUrl: el("base-url").value });
+    await refreshConfig(); // reflete a URL normalizada (ex.: https:// completado)
     setStatus("config-status", "URL salva.", "ok");
   } catch (e) {
     setStatus("config-status", String(e), "err");

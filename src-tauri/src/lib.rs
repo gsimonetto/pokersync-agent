@@ -46,8 +46,24 @@ fn get_config(state: State<AppState>) -> ConfigDto {
 #[tauri::command]
 fn save_base_url(state: State<AppState>, base_url: String) -> Result<(), String> {
     let mut cfg = state.config.lock().unwrap();
-    cfg.base_url = base_url.trim().trim_end_matches('/').to_string();
+    cfg.base_url = normalize_base_url(&base_url);
     cfg.save(&state.config_path).map_err(|e| e.to_string())
+}
+
+/// Usuário digita "www.pokersync.com.br", ou até "pokersync.com.br/" —
+/// sem "https://" na frente a URL não é absoluta e o reqwest recusa
+/// montar a requisição ("builder error" na UI, sem explicar o motivo).
+/// Aceitamos o que o usuário digitar e completamos o esquema.
+fn normalize_base_url(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    }
 }
 
 #[tauri::command]
@@ -378,4 +394,27 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("erro ao rodar o app Tauri");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_base_url;
+
+    #[test]
+    fn adds_https_when_scheme_missing() {
+        assert_eq!(normalize_base_url("www.pokersync.com.br"), "https://www.pokersync.com.br");
+        assert_eq!(normalize_base_url("pokersync.com.br/"), "https://pokersync.com.br");
+    }
+
+    #[test]
+    fn keeps_explicit_scheme() {
+        assert_eq!(normalize_base_url("https://app.pokersync.com/"), "https://app.pokersync.com");
+        assert_eq!(normalize_base_url("http://localhost:3000"), "http://localhost:3000");
+    }
+
+    #[test]
+    fn trims_whitespace_and_empty() {
+        assert_eq!(normalize_base_url("  www.pokersync.com.br  "), "https://www.pokersync.com.br");
+        assert_eq!(normalize_base_url("   "), "");
+    }
 }
