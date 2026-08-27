@@ -1,12 +1,17 @@
 mod auth;
 mod config;
+mod keychain;
 
 use config::AppConfig;
+use keychain::Tokens;
 use scanner::{discover_files, read_pending, PokerRoom, SyncState};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use sync_client::{chunk_files, DeviceInfo, SyncClient, SyncFile, DEFAULT_BATCH_SIZE};
-use tauri::{Manager, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_autostart::ManagerExt;
 
 struct AppState {
     config_path: PathBuf,
@@ -23,21 +28,19 @@ struct ConfigDto {
     extra_folders: std::collections::HashMap<String, Vec<String>>,
 }
 
-impl From<&AppConfig> for ConfigDto {
-    fn from(c: &AppConfig) -> Self {
-        Self {
-            base_url: c.base_url.clone(),
-            logged_in: c.is_logged_in(),
-            user_email: c.user_email.clone(),
-            device_name: c.device_name.clone(),
-            extra_folders: c.extra_folders.clone(),
-        }
+fn config_dto(c: &AppConfig) -> ConfigDto {
+    ConfigDto {
+        base_url: c.base_url.clone(),
+        logged_in: keychain::load().is_some(),
+        user_email: c.user_email.clone(),
+        device_name: c.device_name.clone(),
+        extra_folders: c.extra_folders.clone(),
     }
 }
 
 #[tauri::command]
 fn get_config(state: State<AppState>) -> ConfigDto {
-    ConfigDto::from(&*state.config.lock().unwrap())
+    config_dto(&state.config.lock().unwrap())
 }
 
 #[tauri::command]
@@ -72,37 +75,52 @@ async fn login(
     password: String,
 ) -> Result<ConfigDto, String> {
     let result = auth::login_with_password(&email, &password).await?;
+    keychain::save(&Tokens {
+        access_token: result.access_token,
+        refresh_token: result.refresh_token,
+    })?;
     let mut cfg = state.config.lock().unwrap();
-    cfg.access_token = Some(result.access_token);
-    cfg.refresh_token = Some(result.refresh_token);
     cfg.user_email = result.email;
     cfg.save(&state.config_path).map_err(|e| e.to_string())?;
-    Ok(ConfigDto::from(&*cfg))
+    Ok(config_dto(&cfg))
 }
 
 #[tauri::command]
 fn logout(state: State<AppState>) -> Result<ConfigDto, String> {
+    keychain::clear()?;
     let mut cfg = state.config.lock().unwrap();
-    cfg.access_token = None;
-    cfg.refresh_token = None;
     cfg.user_email = None;
     cfg.save(&state.config_path).map_err(|e| e.to_string())?;
-    Ok(ConfigDto::from(&*cfg))
+    Ok(config_dto(&cfg))
 }
 
 #[tauri::command]
 async fn test_connection(state: State<'_, AppState>) -> Result<String, String> {
-    let (base_url, token) = {
-        let cfg = state.config.lock().unwrap();
-        (cfg.base_url.clone(), cfg.access_token.clone())
-    };
+    let base_url = state.config.lock().unwrap().base_url.clone();
     if base_url.is_empty() {
         return Err("Configure a URL do PokerSync antes de testar.".into());
     }
-    let token = token.ok_or("Faça login antes de testar a conexão.")?;
+    let token = keychain::load()
+        .ok_or("Faça login antes de testar a conexão.")?
+        .access_token;
     let client = SyncClient::new(base_url, token);
     client.ping().await.map_err(|e| e.to_string())?;
     Ok("Conectado.".to_string())
+}
+
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> bool {
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mgr = app.autolaunch();
+    if enabled {
+        mgr.enable().map_err(|e| e.to_string())
+    } else {
+        mgr.disable().map_err(|e| e.to_string())
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -174,19 +192,15 @@ struct SyncSummary {
     errors: u32,
 }
 
-async fn refresh_client(state: &AppState, base_url: &str) -> Result<SyncClient, String> {
-    let refresh_token = state
-        .config
-        .lock()
-        .unwrap()
-        .refresh_token
-        .clone()
-        .ok_or("Sessão expirada — faça login novamente.")?;
+async fn refresh_client(base_url: &str) -> Result<SyncClient, String> {
+    let refresh_token = keychain::load()
+        .ok_or("Sessão expirada — faça login novamente.")?
+        .refresh_token;
     let result = auth::refresh_session(&refresh_token).await?;
-    let mut cfg = state.config.lock().unwrap();
-    cfg.access_token = Some(result.access_token.clone());
-    cfg.refresh_token = Some(result.refresh_token);
-    cfg.save(&state.config_path).map_err(|e| e.to_string())?;
+    keychain::save(&Tokens {
+        access_token: result.access_token.clone(),
+        refresh_token: result.refresh_token,
+    })?;
     Ok(SyncClient::new(base_url.to_string(), result.access_token))
 }
 
@@ -200,10 +214,9 @@ async fn sync_now(
         if cfg.base_url.is_empty() {
             return Err("Configure a URL do PokerSync antes de sincronizar.".into());
         }
-        let token = cfg
-            .access_token
-            .clone()
-            .ok_or("Faça login antes de sincronizar.")?;
+        let token = keychain::load()
+            .ok_or("Faça login antes de sincronizar.")?
+            .access_token;
         let device = DeviceInfo {
             device_id: cfg.device_id.clone(),
             device_name: cfg.device_name.clone(),
@@ -261,7 +274,7 @@ async fn sync_now(
             if let Err(sync_client::SyncError::Rejected { status: 401, .. }) = &attempt {
                 if !already_refreshed {
                     already_refreshed = true;
-                    client = refresh_client(&state, &base_url).await?;
+                    client = refresh_client(&base_url).await?;
                     attempt = client.sync_batch(&device, room.slug(), &batch_files).await;
                 }
             }
@@ -292,6 +305,13 @@ async fn sync_now(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            // Argumento passado quando o SO abre o app sozinho no login —
+            // usado no setup() abaixo pra abrir minimizado na bandeja em
+            // vez de estourar a janela na cara do usuário todo boot.
+            Some(vec!["--hidden"]),
+        ))
         .setup(|app| {
             let config_dir = app.path().app_config_dir().expect("sem app_config_dir");
             let config_path = config_dir.join("config.json");
@@ -302,7 +322,45 @@ pub fn run() {
                 state_dir,
                 config: Mutex::new(config),
             });
+
+            let show_i = MenuItem::with_id(app, "show", "Mostrar", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&tray_menu)
+                .show_menu_on_left_click(true)
+                .tooltip("PokerSync Agent")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
+
+            // Iniciado pelo SO no login (--hidden): fica só na bandeja,
+            // sem abrir a janela.
+            let launched_hidden = std::env::args().any(|a| a == "--hidden");
+            if launched_hidden {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
             Ok(())
+        })
+        // Fechar a janela (X) minimiza pra bandeja em vez de encerrar o
+        // processo — o agente é feito pra ficar rodando em background.
+        // Sair de verdade é só pelo menu da bandeja ("Sair").
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -315,6 +373,8 @@ pub fn run() {
             list_rooms,
             scan_preview,
             sync_now,
+            get_autostart,
+            set_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao rodar o app Tauri");

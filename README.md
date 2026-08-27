@@ -64,11 +64,22 @@ Do lado do produto, em `gsimonetto/pokersync` (`app/`, `lib/`):
 ## Autenticação
 
 V1 pede email/senha diretamente no agente (mesmo GoTrue do produto web) —
-a senha nunca é persistida, só os tokens resultantes, salvos em texto
-plano em `app_config_dir()/config.json`. Aceitável pra uma sessão local de
-agente; **não é produção-grade**. Próximo passo natural: um fluxo de
-pareamento por código de uso único gerado em `/time` no produto, e migrar
-os tokens pro keychain do SO (`keyring` crate) em vez de arquivo plano.
+a senha nunca é persistida. Os tokens resultantes (access + refresh) ficam
+no keychain nativo do SO (`keychain.rs`, via crate `keyring`: Windows
+Credential Manager, macOS Keychain, Secret Service no Linux) — nunca em
+disco em texto plano. O resto da config (URL, device, pastas) não é
+segredo e continua em `config.json`. Próximo passo natural: trocar
+email/senha por um fluxo de pareamento por código de uso único, gerado em
+`/time` no produto.
+
+## Bandeja do sistema e início automático
+
+Fechar a janela minimiza pra bandeja em vez de encerrar o processo — o
+agente é feito pra ficar rodando em background. O menu da bandeja (ícone
+perto do relógio) tem "Mostrar" e "Sair" — só "Sair" encerra de verdade. O
+toggle "Iniciar automaticamente com o sistema" na tela de Conexão liga o
+autostart do SO (`tauri-plugin-autostart`); quando o SO abre o app sozinho
+no login, ele já nasce minimizado na bandeja (flag `--hidden`).
 
 ## Rodando localmente
 
@@ -89,14 +100,15 @@ Tauri v2 pra Windows/macOS).
 
 ## O que falta (próximos passos)
 
-- CI de release por SO (Windows/macOS/Linux).
-- Fluxo de pareamento por código em vez de email/senha; tokens no keychain
-  do SO.
+- Fluxo de pareamento por código em vez de email/senha.
 - Validar `PokerRoom::default_search_paths` e `sniff` contra instalações
   reais de GGPoker, PartyPoker e 888poker (hoje só PokerStars e GGPoker têm
   parser validado no backend — ver `validateParsedHand` em
   `lib/poker/hand-parser.ts`; PartyPoker/888poker chegam como
   `raw_payload` com `parsed_data` best-effort até o parser ganhar suporte
   a esses formatos).
-- Ícone/tray real, autostart no login do SO, watcher em background (hoje é
-  scan sob demanda, acionado pela UI).
+- Ícone de verdade (hoje é um placeholder azul sólido) e assinatura de
+  código por SO (sem isso, Windows/macOS mostram aviso de "app não
+  verificado" ao instalar).
+- Watcher automático em background (hoje é scan sob demanda, acionado pela
+  UI ou manualmente) em vez de só ficar disponível na bandeja.

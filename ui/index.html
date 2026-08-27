@@ -8,7 +8,12 @@
   <body>
     <main>
       <h1>PokerSync Agent</h1>
-      <p class="subtitle">Encontra hand histories e torneios jogados no seu computador e sincroniza com o PokerSync.</p>
+      <p class="subtitle">
+        Encontra hand histories e torneios jogados no seu computador e
+        sincroniza com o PokerSync. Fechar esta janela minimiza o agente
+        para a bandeja do sistema — ele continua disponível ali, e sair de
+        verdade é pelo menu da bandeja.
+      </p>
 
       <section class="panel" id="panel-config">
         <h2>Conexão</h2>
@@ -19,6 +24,10 @@
           <button id="btn-test" class="secondary">Testar conexão</button>
         </div>
         <div id="config-status" class="status"></div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="autostart-toggle" />
+          Iniciar automaticamente com o sistema (minimizado na bandeja)
+        </label>
       </section>
 
       <section class="panel" id="panel-login">

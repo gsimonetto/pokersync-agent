@@ -1,9 +1,8 @@
-//! Config local do agente: URL do produto, sessão Supabase e pastas extras
-//! por sala. Persistida em JSON em app_config_dir() (por usuário/SO, via
-//! tauri::Manager::path). V1 propositalmente simples: tokens em texto
-//! plano no disco do próprio usuário — aceitável pra uma sessão de agente
-//! local, mas migrar pro keychain do SO é o próximo passo óbvio (ver
-//! README) antes de tratar isso como produção.
+//! Config local do agente: URL do produto, device e pastas extras por sala.
+//! Persistida em JSON em app_config_dir() (por usuário/SO, via
+//! tauri::Manager::path). Os tokens de sessão NÃO ficam aqui — vão pro
+//! keychain do SO (ver `keychain.rs`), porque isto é um arquivo texto
+//! plano e tokens são segredo.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -21,10 +20,6 @@ pub struct AppConfig {
     /// de produção porque não é conhecida deste crate — configurada na UI.
     #[serde(default)]
     pub base_url: String,
-    #[serde(default)]
-    pub access_token: Option<String>,
-    #[serde(default)]
-    pub refresh_token: Option<String>,
     #[serde(default)]
     pub user_email: Option<String>,
     /// Identifica esta instalação em hand_sync_devices.device_id — gerado
@@ -57,8 +52,6 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             base_url: String::new(),
-            access_token: None,
-            refresh_token: None,
             user_email: None,
             device_id: new_device_id(),
             device_name: default_device_name(),
@@ -80,9 +73,5 @@ impl AppConfig {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, serde_json::to_string_pretty(self).unwrap_or_default())
-    }
-
-    pub fn is_logged_in(&self) -> bool {
-        self.access_token.is_some()
     }
 }

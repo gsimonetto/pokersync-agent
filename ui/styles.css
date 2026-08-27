@@ -63,6 +63,15 @@ button.secondary { background: #232733; }
 button:disabled { opacity: 0.5; cursor: default; }
 
 .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  margin-top: 4px;
+}
+.checkbox-row input { margin: 0; }
 
 .room-card {
   border: 1px solid var(--border);

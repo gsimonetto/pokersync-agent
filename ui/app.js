@@ -28,6 +28,20 @@ async function refreshConfig() {
   return cfg;
 }
 
+async function refreshAutostart() {
+  el("autostart-toggle").checked = await invoke("get_autostart");
+}
+
+el("autostart-toggle").addEventListener("change", async (e) => {
+  const enabled = e.target.checked;
+  try {
+    await invoke("set_autostart", { enabled });
+  } catch (err) {
+    e.target.checked = !enabled;
+    setStatus("config-status", String(err), "err");
+  }
+});
+
 function renderRoomFolders(room) {
   const list = document.querySelector(`.room-folders[data-slug="${room.slug}"]`);
   if (!list) return;
@@ -203,5 +217,6 @@ el("btn-sync").addEventListener("click", async () => {
 
 (async function init() {
   await refreshConfig();
+  await refreshAutostart();
   await loadRooms();
 })();
