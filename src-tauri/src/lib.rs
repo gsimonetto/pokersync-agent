@@ -136,6 +136,34 @@ fn start_google_login(app: AppHandle, state: State<AppState>) -> Result<(), Stri
         .map_err(|e| format!("Não consegui abrir o navegador: {e}"))
 }
 
+/// Extrai (access_token, refresh_token, state) de uma URL
+/// `pokersync-agent://auth?...` — usado tanto pelo handler automático de
+/// deep link quanto pelo comando `paste_login_link` (colar manual).
+fn parse_auth_deep_link(url: &url::Url) -> Option<(String, String, String)> {
+    if url.scheme() != "pokersync-agent" || url.host_str() != Some("auth") {
+        return None;
+    }
+    let params: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
+    let access_token = params.get("access_token")?.clone();
+    let refresh_token = params.get("refresh_token")?.clone();
+    let state = params.get("state").cloned().unwrap_or_default();
+    Some((access_token, refresh_token, state))
+}
+
+/// Caminho manual pro login com Google: quando o SO não sabe abrir
+/// `pokersync-agent://` sozinho (varia por SO/instalação — relatado como
+/// "confirmo no navegador e fica só rodando"), a página de conclusão no
+/// produto (app/agent-login/concluido) mostra esse link pra copiar. O
+/// usuário cola aqui e o agente segue o mesmo caminho do deep link.
+#[tauri::command]
+async fn paste_login_link(app: AppHandle, link: String) -> Result<(), String> {
+    let url = url::Url::parse(link.trim()).map_err(|_| "Link inválido — copie o link inteiro da página.".to_string())?;
+    let (access_token, refresh_token, state) =
+        parse_auth_deep_link(&url).ok_or("Esse link não é um link de login do PokerSync Agent.".to_string())?;
+    complete_google_login(app, access_token, refresh_token, state).await;
+    Ok(())
+}
+
 /// Chamado pelo handler de deep link (`run()`) quando
 /// `pokersync-agent://auth?...` volta do login com Google. Confere o
 /// nonce, resolve o email do token e salva a sessão — mesmo destino final
@@ -422,21 +450,17 @@ pub fn run() {
 
             // Login com Google: pokersync-agent://auth?access_token=...
             // volta aqui depois do navegador do sistema completar o OAuth
-            // (ver start_google_login e app/agent-login no produto).
+            // (ver start_google_login e app/agent-login no produto). Só
+            // funciona quando o SO sabe abrir o esquema customizado — nem
+            // sempre acontece sozinho (varia por SO/forma de instalação),
+            // por isso existe também o comando `paste_login_link` como
+            // caminho manual (mesmo parser, ver `parse_auth_deep_link`).
             let deep_link_handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
-                    if url.scheme() != "pokersync-agent" || url.host_str() != Some("auth") {
-                        continue;
-                    }
-                    let params: std::collections::HashMap<String, String> =
-                        url.query_pairs().into_owned().collect();
-                    let (Some(access_token), Some(refresh_token)) =
-                        (params.get("access_token").cloned(), params.get("refresh_token").cloned())
-                    else {
+                    let Some((access_token, refresh_token, received_state)) = parse_auth_deep_link(&url) else {
                         continue;
                     };
-                    let received_state = params.get("state").cloned().unwrap_or_default();
                     let handle = deep_link_handle.clone();
                     tauri::async_runtime::spawn(async move {
                         complete_google_login(handle, access_token, refresh_token, received_state).await;
@@ -490,6 +514,7 @@ pub fn run() {
             save_extra_folders,
             login,
             start_google_login,
+            paste_login_link,
             logout,
             test_connection,
             list_rooms,

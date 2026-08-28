@@ -51,6 +51,18 @@
             <span>Continuar com Google</span>
           </button>
 
+          <button type="button" id="btn-show-paste-link" class="link-btn">
+            Confirmou no navegador e não abriu aqui sozinho? Colar link de login
+          </button>
+          <div id="paste-link-row" class="hidden">
+            <div class="field-input" style="margin-top: 8px">
+              <input type="text" id="paste-link-input" placeholder="pokersync-agent://auth?..." />
+            </div>
+            <button type="button" id="btn-paste-link-confirm" class="btn btn-secondary btn-sm" style="margin-top: 8px; width: 100%">
+              Confirmar login
+            </button>
+          </div>
+
           <div id="login-status"></div>
         </form>
       </div>

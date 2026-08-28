@@ -84,6 +84,27 @@ el("btn-google-login").addEventListener("click", async () => {
   }
 });
 
+// Caminho manual: o SO nem sempre sabe abrir pokersync-agent:// sozinho
+// (varia por SO/instalação) — sem isso, quem confirma no Google e o app
+// não reabre fica travado sem nenhuma saída.
+el("btn-show-paste-link").addEventListener("click", () => {
+  el("paste-link-row").classList.remove("hidden");
+  el("btn-show-paste-link").classList.add("hidden");
+  el("paste-link-input").focus();
+});
+
+el("btn-paste-link-confirm").addEventListener("click", async () => {
+  const status = el("login-status");
+  const link = el("paste-link-input").value.trim();
+  if (!link) return;
+  setStatus(status, "Confirmando login...");
+  try {
+    await invoke("paste_login_link", { link });
+  } catch (err) {
+    setStatus(status, String(err), "err");
+  }
+});
+
 listen("google-login-result", async (event) => {
   const status = el("login-status");
   if (event.payload?.ok) {
