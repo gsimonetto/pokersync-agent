@@ -9,14 +9,16 @@ pub enum PokerRoom {
     GgPoker,
     PartyPoker,
     Poker888,
+    Acr,
 }
 
 impl PokerRoom {
-    pub const ALL: [PokerRoom; 4] = [
+    pub const ALL: [PokerRoom; 5] = [
         PokerRoom::PokerStars,
         PokerRoom::GgPoker,
         PokerRoom::PartyPoker,
         PokerRoom::Poker888,
+        PokerRoom::Acr,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -25,6 +27,7 @@ impl PokerRoom {
             PokerRoom::GgPoker => "ggpoker",
             PokerRoom::PartyPoker => "partypoker",
             PokerRoom::Poker888 => "888poker",
+            PokerRoom::Acr => "acr",
         }
     }
 
@@ -34,6 +37,7 @@ impl PokerRoom {
             PokerRoom::GgPoker => "GGPoker",
             PokerRoom::PartyPoker => "PartyPoker",
             PokerRoom::Poker888 => "888poker",
+            PokerRoom::Acr => "ACR",
         }
     }
 
@@ -59,6 +63,20 @@ impl PokerRoom {
             PokerRoom::GgPoker => &["GGPoker", "GGNetwork", "Natural8"],
             PokerRoom::PartyPoker => &["PartyGaming/PartyPoker", "partypoker"],
             PokerRoom::Poker888 => &["888poker", "888 Poker"],
+            // ACR roda no cliente da Winning Poker Network — pasta de
+            // instalação varia por skin (ACR, Black Chip Poker, True
+            // Poker), mas hand history geralmente vai em "HH" em vez de
+            // "HandHistory" (ver default_search_paths).
+            PokerRoom::Acr => &["ACR Poker", "AmericasCardroom", "Americas Cardroom"],
+        }
+    }
+
+    /// Nome(s) da subpasta de hand history dentro da pasta do cliente.
+    /// A maioria usa "HandHistory"; a Winning Poker Network (ACR) usa "HH".
+    fn history_subfolder_names(self) -> &'static [&'static str] {
+        match self {
+            PokerRoom::Acr => &["HH", "HandHistory"],
+            _ => &["HandHistory"],
         }
     }
 
@@ -74,22 +92,20 @@ impl PokerRoom {
         let data_local = dirs::data_local_dir(); // %LOCALAPPDATA% no Windows
 
         for folder in self.client_folder_names() {
-            if let Some(doc) = &documents {
-                roots.push(doc.join(folder).join("HandHistory"));
-            }
-            if let Some(cfg) = &config {
-                roots.push(cfg.join(folder).join("HandHistory"));
-            }
-            if let Some(local) = &data_local {
-                roots.push(local.join(folder).join("HandHistory"));
-            }
-            // macOS: clientes de poker costumam gravar em Application Support.
-            if let Some(h) = &home {
-                roots.push(
-                    h.join("Library/Application Support")
-                        .join(folder)
-                        .join("HandHistory"),
-                );
+            for sub in self.history_subfolder_names() {
+                if let Some(doc) = &documents {
+                    roots.push(doc.join(folder).join(sub));
+                }
+                if let Some(cfg) = &config {
+                    roots.push(cfg.join(folder).join(sub));
+                }
+                if let Some(local) = &data_local {
+                    roots.push(local.join(folder).join(sub));
+                }
+                // macOS: clientes de poker costumam gravar em Application Support.
+                if let Some(h) = &home {
+                    roots.push(h.join("Library/Application Support").join(folder).join(sub));
+                }
             }
         }
         roots
@@ -99,8 +115,8 @@ impl PokerRoom {
     /// sala, olhando só o início do arquivo (evita ler/parsear arquivos
     /// grandes por completo só pra descartá-los). PokerStars e GGPoker são
     /// confirmados contra hand history real (mesmos marcadores do parser em
-    /// lib/poker/hand-parser.ts); PartyPoker e 888poker são best-effort —
-    /// não temos amostra real ainda, então a varredura confia principalmente
+    /// lib/poker/hand-parser.ts); PartyPoker, 888poker e ACR são best-effort
+    /// — não temos amostra real ainda, então a varredura confia principalmente
     /// na pasta de origem (client_folder_names) e só usa isto como reforço.
     pub fn sniff(self, head: &str) -> bool {
         match self {
@@ -112,6 +128,12 @@ impl PokerRoom {
                 head.to_lowercase().contains("partypoker") || head.contains("Game #")
             }
             PokerRoom::Poker888 => head.contains("888poker") || head.contains("Game #"),
+            PokerRoom::Acr => {
+                let lower = head.to_lowercase();
+                lower.contains("winning poker network")
+                    || lower.contains("americas cardroom")
+                    || head.contains("Stage #")
+            }
         }
     }
 }

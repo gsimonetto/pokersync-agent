@@ -1,8 +1,8 @@
 # PokerSync Agent
 
 Agente desktop (Tauri + Rust) que varre o computador do jogador em busca de
-hand histories e torneios jogados — PokerStars, GGPoker, PartyPoker e
-888poker — e sincroniza com o PokerSync. Implementa a decisão 005 e o item
+hand histories e torneios jogados — PokerStars, GGPoker, PartyPoker, 888poker
+e ACR — e sincroniza com o PokerSync. Implementa a decisão 005 e o item
 4 do backlog vivo do produto (ver `POKERSYNC.md` §5/§7 em
 [`gsimonetto/pokersync`](https://github.com/gsimonetto/pokersync)).
 
@@ -51,7 +51,7 @@ Do lado do produto, em `gsimonetto/pokersync` (`app/`, `lib/`):
 2. `discover_files` varre essas pastas recursivamente, filtra por extensão
    e faz uma checagem rápida do início do arquivo (`PokerRoom::sniff`) —
    confirmada contra hand history real só para PokerStars e GGPoker (mesmos
-   marcadores do parser). PartyPoker/888poker usam uma heurística mais
+   marcadores do parser). PartyPoker/888poker/ACR usam uma heurística mais
    fraca hoje, documentada em `crates/scanner/src/room.rs`.
 3. `SyncState` (um JSON por sala, em `app_config_dir()/sync-state/`) guarda
    tamanho+mtime de cada arquivo já sincronizado — só o que mudou desde a
@@ -129,7 +129,7 @@ módulo (`--positive`/`--negative`/`--training`/`--evolution`/`--review`).
 O logo (`pokersync-logo.svg`) é o arquivo real do produto, copiado pra cá.
 
 **Badges das salas**: não são os logotipos oficiais de PokerStars/GGPoker/
-PartyPoker/888poker — são iniciais num badge colorido, usando só as cores
+PartyPoker/888poker/ACR — são iniciais num badge colorido, usando só as cores
 do próprio design system do PokerSync (`ROOM_STYLE` em `ui/app.js`), não
 as cores de marca de cada operadora. Decisão deliberada: fabricar de
 memória um logotipo de terceiro é arriscado (fica errado, ou levanta
@@ -143,11 +143,12 @@ cada sala pra substituir.
   (precisa dos assets aprovados — ver "Identidade visual" acima).
 - Fluxo de pareamento por código em vez de email/senha/Google.
 - Validar `PokerRoom::default_search_paths` e `sniff` contra instalações
-  reais de GGPoker, PartyPoker e 888poker (hoje só PokerStars e GGPoker têm
-  parser validado no backend — ver `validateParsedHand` em
-  `lib/poker/hand-parser.ts`; PartyPoker/888poker chegam como
+  reais de GGPoker, PartyPoker, 888poker e ACR (hoje só PokerStars e GGPoker
+  têm parser validado no backend — ver `validateParsedHand` em
+  `lib/poker/hand-parser.ts`; PartyPoker/888poker/ACR chegam como
   `raw_payload` com `parsed_data` best-effort até o parser ganhar suporte
-  a esses formatos).
+  a esses formatos — `hand-parser.ts` hoje nem reconhece o texto de hand
+  history dessas três salas, é o maior gap real da varredura hoje).
 - Ícone de verdade (hoje é um placeholder azul sólido) e assinatura de
   código por SO (sem isso, Windows/macOS mostram aviso de "app não
   verificado" ao instalar).

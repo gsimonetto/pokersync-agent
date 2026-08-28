@@ -13,6 +13,7 @@ const ROOM_STYLE = {
   ggpoker: { initials: "GG", accent: "#f59e0b" },
   partypoker: { initials: "PP", accent: "#a855f7" },
   "888poker": { initials: "888", accent: "#22c55e" },
+  acr: { initials: "ACR", accent: "#e0555a" },
 };
 
 function setStatus(node, message, kind) {
