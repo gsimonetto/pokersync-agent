@@ -96,10 +96,22 @@ listen("google-login-result", async (event) => {
   }
 });
 
-// ---------- Configurações avançadas ----------
+// ---------- Configurações avançadas (modal) ----------
 
-el("btn-settings").addEventListener("click", () => {
-  el("settings-panel").classList.toggle("hidden");
+function openSettings() {
+  el("settings-overlay").classList.remove("hidden");
+}
+function closeSettings() {
+  el("settings-overlay").classList.add("hidden");
+}
+
+el("btn-settings").addEventListener("click", openSettings);
+el("btn-settings-close").addEventListener("click", closeSettings);
+el("settings-overlay").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) closeSettings(); // clique fora do card
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !el("settings-overlay").classList.contains("hidden")) closeSettings();
 });
 
 el("device-name-input").addEventListener("change", async (e) => {

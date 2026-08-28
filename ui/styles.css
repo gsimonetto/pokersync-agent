@@ -83,7 +83,7 @@ body::after {
   box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.7);
 }
 
-.login-logo { display: block; height: 40px; width: auto; margin: 0 auto 20px; }
+.login-logo { display: block; height: 56px; width: auto; margin: 0 auto 20px; }
 
 .login-heading { text-align: center; margin-bottom: 24px; }
 .login-heading h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
@@ -179,7 +179,7 @@ body::after {
   justify-content: space-between;
   padding: 6px 0 20px;
 }
-.topbar-logo { height: 22px; width: auto; }
+.topbar-logo { height: 28px; width: auto; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 .account-chip {
   display: flex;
@@ -289,15 +289,31 @@ table.results-table { width: 100%; border-collapse: collapse; margin-top: 8px; f
 table.results-table th, table.results-table td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--hairline); }
 table.results-table th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
 
-/* Painel de configurações avançadas — escondido por padrão */
-#settings-panel {
-  margin-top: 24px;
+/* Configurações avançadas como modal — antes era um bloco no fim da
+   página (precisava rolar até embaixo pra achar). */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 16px;
+  padding-top: 64px;
+}
+.modal-panel {
+  width: 100%;
+  max-width: 460px;
   background: var(--surface);
   border: 1px solid var(--hairline);
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 18px 20px;
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.7);
 }
-#settings-panel h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 14px; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.modal-header h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
 .settings-row:last-child { border-bottom: none; }
 .settings-row-label { font-size: 13px; }
