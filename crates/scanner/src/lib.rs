@@ -6,7 +6,7 @@
 pub mod room;
 pub mod state;
 
-pub use room::PokerRoom;
+pub use room::{FileKind, PokerRoom};
 pub use state::{signature_of, FileSignature, SyncState};
 
 use std::io::Read;
@@ -38,7 +38,7 @@ fn has_text_extension(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn sniff_file(path: &Path, room: PokerRoom) -> bool {
+fn sniff_file(path: &Path, room: PokerRoom, kind: FileKind) -> bool {
     let Ok(mut f) = std::fs::File::open(path) else {
         return false;
     };
@@ -47,14 +47,15 @@ fn sniff_file(path: &Path, room: PokerRoom) -> bool {
         return false;
     };
     buf.truncate(n);
-    room.sniff(&String::from_utf8_lossy(&buf))
+    room.sniff_kind(kind, &String::from_utf8_lossy(&buf))
 }
 
-/// Varre `roots` recursivamente procurando hand history da sala indicada.
-/// Só lê os primeiros bytes de cada arquivo candidato (sniff) — o conteúdo
-/// inteiro só é lido depois, em `read_pending`, e só pros arquivos que
-/// realmente precisam sincronizar.
-pub fn discover_files(roots: &[PathBuf], room: PokerRoom) -> Vec<DiscoveredFile> {
+/// Varre `roots` recursivamente procurando hand history (ou resumo de
+/// torneio, conforme `kind`) da sala indicada. Só lê os primeiros bytes de
+/// cada arquivo candidato (sniff) — o conteúdo inteiro só é lido depois,
+/// em `read_pending`, e só pros arquivos que realmente precisam
+/// sincronizar.
+pub fn discover_files(roots: &[PathBuf], room: PokerRoom, kind: FileKind) -> Vec<DiscoveredFile> {
     let mut found = Vec::new();
     for root in roots {
         if !root.is_dir() {
@@ -73,7 +74,7 @@ pub fn discover_files(roots: &[PathBuf], room: PokerRoom) -> Vec<DiscoveredFile>
             if meta.len() == 0 || meta.len() > MAX_FILE_BYTES {
                 continue;
             }
-            if !sniff_file(path, room) {
+            if !sniff_file(path, room, kind) {
                 continue;
             }
             let Ok(signature) = signature_of(path) else {
@@ -138,7 +139,7 @@ mod tests {
         );
         write(dir.path(), "empty.txt", "");
 
-        let found = discover_files(&[dir.path().to_path_buf()], PokerRoom::PokerStars);
+        let found = discover_files(&[dir.path().to_path_buf()], PokerRoom::PokerStars, FileKind::HandHistory);
         assert_eq!(found.len(), 1);
         assert!(found[0].path.ends_with("HH20260101 Table.txt"));
     }
@@ -154,7 +155,7 @@ mod tests {
             "PokerStars Hand #999: Hold'em No Limit\n...",
         );
 
-        let found = discover_files(&[dir.path().to_path_buf()], PokerRoom::PokerStars);
+        let found = discover_files(&[dir.path().to_path_buf()], PokerRoom::PokerStars, FileKind::HandHistory);
         assert_eq!(found.len(), 1);
     }
 
@@ -163,6 +164,7 @@ mod tests {
         let found = discover_files(
             &[PathBuf::from("/this/path/does/not/exist")],
             PokerRoom::PokerStars,
+            FileKind::HandHistory,
         );
         assert!(found.is_empty());
     }
@@ -175,7 +177,7 @@ mod tests {
             "HH.txt",
             "PokerStars Hand #1: Hold'em No Limit\n...",
         );
-        let found = discover_files(&[dir.path().to_path_buf()], PokerRoom::PokerStars);
+        let found = discover_files(&[dir.path().to_path_buf()], PokerRoom::PokerStars, FileKind::HandHistory);
         assert_eq!(found.len(), 1);
 
         let mut state = SyncState::default();
@@ -185,5 +187,28 @@ mod tests {
         state.mark_synced(path.clone(), found[0].signature);
         let pending_after = read_pending(&found, &state);
         assert!(pending_after.is_empty());
+    }
+
+    #[test]
+    fn discovers_tournament_summary_separately_from_hand_history() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "TS1234567890.txt",
+            "PokerStars Tournament #1234567890, No Limit Hold'em\nBuy-In: $10.00+$1.00\n...",
+        );
+        write(
+            dir.path(),
+            "HH1234567890.txt",
+            "PokerStars Hand #1234: Tournament #1234567890, $10+$1 USD Hold'em No Limit\n...",
+        );
+
+        let hands = discover_files(&[dir.path().to_path_buf()], PokerRoom::PokerStars, FileKind::HandHistory);
+        assert_eq!(hands.len(), 1);
+        assert!(hands[0].path.ends_with("HH1234567890.txt"));
+
+        let tournaments = discover_files(&[dir.path().to_path_buf()], PokerRoom::PokerStars, FileKind::TournamentSummary);
+        assert_eq!(tournaments.len(), 1);
+        assert!(tournaments[0].path.ends_with("TS1234567890.txt"));
     }
 }

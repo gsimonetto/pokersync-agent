@@ -16,6 +16,19 @@ const ROOM_STYLE = {
   acr: { initials: "ACR", accent: "#e0555a" },
 };
 
+const IMPORT_KIND_META = {
+  hands: {
+    title: "Importar mãos",
+    hint: "O agente já varre sozinho as pastas padrão de cada sala instalada. Se sua hand history fica num lugar diferente, adicione a pasta abaixo.",
+    dialogTitle: "Escolher pasta de hand history",
+  },
+  tournaments: {
+    title: "Importar torneios",
+    hint: "Resumo de torneio (buy-in, colocação e premiação) — arquivo separado da hand history. Mesma ideia: o agente já procura nas pastas padrão, adicione outras se precisar.",
+    dialogTitle: "Escolher pasta de resumo de torneio",
+  },
+};
+
 function setStatus(node, message, kind) {
   node.innerHTML = "";
   if (!message) return;
@@ -30,8 +43,29 @@ function setStatus(node, message, kind) {
 }
 
 let rooms = [];
-let selectedRooms = new Set();
 let extraFolders = {};
+let openImportKind = null;
+let lastAutoSyncAt = null;
+
+// ---------- Splash (vídeo antes do login) ----------
+// Só toca uma vez por processo — a janela do Tauri nunca é destruída
+// (fechar minimiza pra bandeja, ver src-tauri/src/lib.rs), então este
+// script só roda de novo se o app for reiniciado de verdade.
+let splashDone = false;
+function finishSplash() {
+  if (splashDone) return;
+  splashDone = true;
+  el("screen-splash").classList.add("hidden");
+  boot();
+}
+el("splash-video").addEventListener("ended", finishSplash);
+// Autoplay pode falhar (política do WebView) ou o arquivo pode não
+// carregar — nenhum dos dois pode travar quem só quer logar.
+el("splash-video").addEventListener("error", finishSplash);
+el("btn-splash-skip").addEventListener("click", finishSplash);
+// Rede de segurança: nunca prende a tela de login por mais que alguns
+// segundos, mesmo se "ended" nunca disparar por algum motivo.
+setTimeout(finishSplash, 8000);
 
 function showScreen(loggedIn) {
   el("screen-login").classList.toggle("hidden", loggedIn);
@@ -42,12 +76,14 @@ async function refreshConfig() {
   const cfg = await invoke("get_config");
   el("base-url").value = cfg.base_url ?? "";
   el("device-name-input").value = cfg.device_name ?? "";
+  el("auto-sync-toggle").checked = cfg.auto_sync_enabled;
   extraFolders = cfg.extra_folders ?? {};
   showScreen(cfg.logged_in);
   if (cfg.logged_in) {
     el("user-email").textContent = cfg.user_email ?? "(sem email)";
     el("account-avatar").textContent = (cfg.user_email ?? "?").trim().charAt(0).toUpperCase();
   }
+  renderAutoSyncStatus();
   return cfg;
 }
 
@@ -118,6 +154,30 @@ listen("google-login-result", async (event) => {
   }
 });
 
+// ---------- Sync automático em background ----------
+// O agente sincroniza sozinho a cada poucos minutos (ver spawn_auto_sync
+// em src-tauri/src/lib.rs); este evento só avisa a UI quando um ciclo
+// realmente importou algo, pra "última sincronização" não ficar mentindo.
+listen("auto-sync-result", (event) => {
+  lastAutoSyncAt = Date.now();
+  renderAutoSyncStatus(event.payload?.imported ?? 0);
+});
+
+function renderAutoSyncStatus(justImported) {
+  const node = el("auto-sync-status");
+  if (!el("auto-sync-toggle").checked) {
+    node.textContent = "Sincronização automática desligada — ative em Configurações.";
+    node.classList.add("is-off");
+    return;
+  }
+  node.classList.remove("is-off");
+  if (justImported) {
+    node.textContent = `Sincronizado automaticamente agora — ${justImported} mão(s)/torneio(s) novo(s).`;
+    return;
+  }
+  node.textContent = "Sincronização automática ativa — roda sozinha em background, sem precisar clicar em nada.";
+}
+
 // ---------- Configurações avançadas (modal) ----------
 
 function openSettings() {
@@ -154,6 +214,17 @@ el("base-url").addEventListener("change", async (e) => {
   }
 });
 
+el("auto-sync-toggle").addEventListener("change", async (e) => {
+  const enabled = e.target.checked;
+  try {
+    await invoke("set_auto_sync_enabled", { enabled });
+    renderAutoSyncStatus();
+  } catch (err) {
+    e.target.checked = !enabled;
+    setStatus(el("config-status"), String(err), "err");
+  }
+});
+
 el("btn-test").addEventListener("click", async () => {
   const status = el("config-status");
   setStatus(status, "Testando...");
@@ -186,13 +257,29 @@ el("autostart-toggle").addEventListener("change", async (e) => {
   }
 });
 
-// ---------- Salas ----------
+// ---------- Importação (mãos / torneios) ----------
+// Antes era "escolha a sala, depois a pasta" — agora são só 2 botões
+// (mãos/torneios), cada um varrendo TODAS as salas de uma vez; a sala de
+// cada arquivo aparece como informação nos resultados, não como escolha
+// prévia. Pastas extras também deixaram de ser por sala — uma pasta
+// adicionada aqui é varrida contra todas as salas (ver discover_all no
+// lado Rust).
 
-function renderRoomFolders(room) {
-  const list = document.querySelector(`.room-folders[data-slug="${room.slug}"]`);
-  if (!list) return;
+async function loadRooms() {
+  rooms = await invoke("list_rooms");
+}
+
+function roomLabel(slug) {
+  const name = rooms.find((r) => r.slug === slug)?.display_name ?? slug;
+  const style = ROOM_STYLE[slug];
+  if (!style) return name;
+  return `<span class="room-dot" style="background:${style.accent}"></span>${name}`;
+}
+
+function renderImportFolders() {
+  const list = el("import-folder-list");
   list.innerHTML = "";
-  const folders = extraFolders[room.slug] ?? [];
+  const folders = extraFolders[openImportKind] ?? [];
   if (folders.length === 0) {
     const empty = document.createElement("span");
     empty.className = "folder-chip empty";
@@ -205,110 +292,61 @@ function renderRoomFolders(room) {
     chip.className = "folder-chip";
     chip.title = folder;
     const text = document.createElement("span");
-    text.textContent = folder.length > 34 ? "…" + folder.slice(-32) : folder;
+    text.textContent = folder.length > 44 ? "…" + folder.slice(-42) : folder;
     const remove = document.createElement("button");
     remove.textContent = "×";
     remove.className = "chip-remove";
-    remove.addEventListener("click", () => removeFolder(room.slug, folder));
+    remove.addEventListener("click", () => removeImportFolder(folder));
     chip.appendChild(text);
     chip.appendChild(remove);
     list.appendChild(chip);
   }
 }
 
-async function saveFolders(slug) {
-  await invoke("save_extra_folders", { room: slug, folders: extraFolders[slug] ?? [] });
+async function saveImportFolders() {
+  await invoke("save_extra_folders", { kind: openImportKind, folders: extraFolders[openImportKind] ?? [] });
 }
 
-async function addFolder(slug) {
-  const picked = await openFolderDialog({ directory: true, multiple: false, title: "Escolher pasta de hand history" });
+el("btn-import-add-folder").addEventListener("click", async () => {
+  const meta = IMPORT_KIND_META[openImportKind];
+  const picked = await openFolderDialog({ directory: true, multiple: false, title: meta.dialogTitle });
   if (!picked) return;
-  const current = extraFolders[slug] ?? [];
+  const current = extraFolders[openImportKind] ?? [];
   if (!current.includes(picked)) {
-    extraFolders[slug] = [...current, picked];
-    await saveFolders(slug);
+    extraFolders[openImportKind] = [...current, picked];
+    await saveImportFolders();
   }
-  renderRoomFolders(rooms.find((r) => r.slug === slug));
+  renderImportFolders();
+});
+
+async function removeImportFolder(folder) {
+  extraFolders[openImportKind] = (extraFolders[openImportKind] ?? []).filter((f) => f !== folder);
+  await saveImportFolders();
+  renderImportFolders();
 }
 
-async function removeFolder(slug, folder) {
-  extraFolders[slug] = (extraFolders[slug] ?? []).filter((f) => f !== folder);
-  await saveFolders(slug);
-  renderRoomFolders(rooms.find((r) => r.slug === slug));
+function openImportPanel(kind) {
+  openImportKind = kind;
+  const meta = IMPORT_KIND_META[kind];
+  el("import-panel-title").textContent = meta.title;
+  el("import-panel-hint").textContent = meta.hint;
+  el("import-panel").classList.remove("hidden");
+  el("import-results-table").classList.add("hidden");
+  el("import-scan-status").innerHTML = "";
+  renderImportFolders();
+  el("import-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-async function loadRooms() {
-  rooms = await invoke("list_rooms");
-  const container = el("rooms");
-  container.innerHTML = "";
-  container.className = "rooms-grid";
+el("btn-open-hands").addEventListener("click", () => openImportPanel("hands"));
+el("btn-open-tournaments").addEventListener("click", () => openImportPanel("tournaments"));
+el("btn-import-panel-close").addEventListener("click", () => {
+  el("import-panel").classList.add("hidden");
+  openImportKind = null;
+});
 
-  for (const room of rooms) {
-    const style = ROOM_STYLE[room.slug] ?? { initials: room.display_name.slice(0, 2).toUpperCase(), accent: "#3b82f6" };
-
-    const card = document.createElement("div");
-    card.className = "room-card";
-    card.style.setProperty("--acc", style.accent);
-    card.dataset.slug = room.slug;
-
-    const header = document.createElement("div");
-    header.className = "room-header";
-
-    const badge = document.createElement("div");
-    badge.className = "room-badge";
-    badge.textContent = style.initials;
-    header.appendChild(badge);
-
-    const nameWrap = document.createElement("div");
-    nameWrap.className = "room-name-wrap";
-    nameWrap.innerHTML = `<div class="room-name">${room.display_name}</div>`;
-    header.appendChild(nameWrap);
-
-    const toggleWrap = document.createElement("label");
-    toggleWrap.className = "room-toggle";
-    toggleWrap.title = "Incluir na busca/sincronização";
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = true;
-    selectedRooms.add(room.slug);
-    checkbox.addEventListener("change", () => {
-      if (checkbox.checked) selectedRooms.add(room.slug);
-      else selectedRooms.delete(room.slug);
-      card.classList.toggle("is-off", !checkbox.checked);
-    });
-    toggleWrap.appendChild(checkbox);
-    header.appendChild(toggleWrap);
-
-    card.appendChild(header);
-
-    const folderList = document.createElement("div");
-    folderList.className = "room-folders";
-    folderList.dataset.slug = room.slug;
-    card.appendChild(folderList);
-
-    const addBtn = document.createElement("button");
-    addBtn.className = "btn btn-ghost btn-sm";
-    addBtn.textContent = "+ Adicionar pasta";
-    addBtn.addEventListener("click", () => addFolder(room.slug));
-    card.appendChild(addBtn);
-
-    const scanStatus = document.createElement("div");
-    scanStatus.className = "room-scan-status";
-    scanStatus.dataset.slug = room.slug;
-    card.appendChild(scanStatus);
-
-    container.appendChild(card);
-    renderRoomFolders(room);
-  }
-}
-
-function roomScanStatusEl(slug) {
-  return document.querySelector(`.room-scan-status[data-slug="${slug}"]`);
-}
-
-function renderResults(rows) {
-  const table = el("results-table");
-  const body = el("results-body");
+function renderImportResults(rows) {
+  const table = el("import-results-table");
+  const body = el("import-results-body");
   body.innerHTML = "";
   for (const row of rows) {
     const tr = document.createElement("tr");
@@ -318,54 +356,35 @@ function renderResults(rows) {
   table.classList.toggle("hidden", rows.length === 0);
 }
 
-el("btn-scan").addEventListener("click", async () => {
-  const status = el("scan-status");
-  setStatus(status, "Buscando hand histories no computador...");
-  document.querySelectorAll(".room-scan-status").forEach((n) => (n.textContent = ""));
+// "Verificar agora" é um atalho opcional pra feedback imediato — a
+// sincronização de verdade já roda sozinha em background (ver
+// spawn_auto_sync), então ninguém É OBRIGADO a clicar aqui.
+el("btn-import-scan").addEventListener("click", async () => {
+  const status = el("import-scan-status");
+  setStatus(status, "Verificando e sincronizando...");
   try {
-    const summaries = await invoke("scan_preview", { rooms: Array.from(selectedRooms) });
-    renderResults(
+    const summaries = await invoke("sync_now", { kind: openImportKind });
+    renderImportResults(
       summaries.map((s) => ({
-        room: rooms.find((r) => r.slug === s.room)?.display_name ?? s.room,
-        files: s.files_found,
-        detail: s.files_pending > 0 ? `${s.files_pending} novo(s)/alterado(s)` : "tudo sincronizado",
-      }))
-    );
-    for (const s of summaries) {
-      const node = roomScanStatusEl(s.room);
-      if (!node) continue;
-      node.textContent = s.files_pending > 0 ? `${s.files_pending} arquivo(s) pendente(s)` : `${s.files_found} arquivo(s), em dia`;
-      node.classList.toggle("has-pending", s.files_pending > 0);
-    }
-    const total = summaries.reduce((acc, s) => acc + s.files_pending, 0);
-    setStatus(status, `Busca concluída — ${total} arquivo(s) novo(s) ou alterado(s).`, "ok");
-  } catch (err) {
-    setStatus(status, String(err), "err");
-  }
-});
-
-el("btn-sync").addEventListener("click", async () => {
-  const status = el("scan-status");
-  setStatus(status, "Sincronizando...");
-  try {
-    const summaries = await invoke("sync_now", { rooms: Array.from(selectedRooms) });
-    renderResults(
-      summaries.map((s) => ({
-        room: rooms.find((r) => r.slug === s.room)?.display_name ?? s.room,
+        room: roomLabel(s.room),
         files: s.files_synced,
-        detail: `${s.imported} nova(s), ${s.duplicates} duplicada(s), ${s.errors} c/ erro`,
+        detail: s.files_synced > 0 ? `${s.imported} nova(s), ${s.duplicates} duplicada(s), ${s.errors} c/ erro` : "tudo sincronizado",
       }))
     );
-    setStatus(status, "Sincronização concluída.", "ok");
+    const total = summaries.reduce((acc, s) => acc + s.imported, 0);
+    setStatus(status, `Verificação concluída — ${total} novo(s).`, "ok");
   } catch (err) {
     setStatus(status, String(err), "err");
   }
 });
 
-(async function init() {
+// Só decide login-vs-app quando o splash termina (finishSplash chama
+// boot()) — chamar refreshConfig() antes disso destravaria login/app por
+// baixo do vídeo, já que showScreen() tira a classe "hidden" na hora.
+async function boot() {
   const cfg = await refreshConfig();
   if (cfg.logged_in) {
     await refreshAutostart();
     await loadRooms();
   }
-})();
+}

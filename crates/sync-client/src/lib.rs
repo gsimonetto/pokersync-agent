@@ -46,6 +46,17 @@ pub struct SyncBatchResult {
     pub errors: u32,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TournamentSyncBatchResult {
+    #[serde(rename = "batchId")]
+    pub batch_id: String,
+    #[serde(rename = "totalFiles")]
+    pub total_files: u32,
+    pub imported: u32,
+    pub duplicates: u32,
+    pub errors: u32,
+}
+
 #[derive(Debug, Error)]
 pub enum SyncError {
     #[error("erro de rede: {0}")]
@@ -93,6 +104,33 @@ impl SyncClient {
         files: &[SyncFile],
     ) -> Result<SyncBatchResult, SyncError> {
         let url = format!("{}/api/agent/sync", self.base_url);
+        let body = SyncRequest {
+            device,
+            poker_room,
+            files,
+        };
+        let resp = self
+            .http
+            .post(url)
+            .bearer_auth(&self.access_token)
+            .json(&body)
+            .send()
+            .await?;
+        let value = Self::body_or_err(resp).await?;
+        serde_json::from_value(value).map_err(|e| SyncError::BadResponse(e.to_string()))
+    }
+
+    /// Mesmo formato de `sync_batch`, mas pro resumo de torneio — endpoint
+    /// separado (`/api/agent/sync-tournaments`) porque o backend faz outra
+    /// coisa com o texto (extrai buy-in/colocação/premiação em vez de
+    /// mãos, ver `lib/poker/tournament-summary-parser.ts` no produto).
+    pub async fn sync_tournament_batch(
+        &self,
+        device: &DeviceInfo,
+        poker_room: &str,
+        files: &[SyncFile],
+    ) -> Result<TournamentSyncBatchResult, SyncError> {
+        let url = format!("{}/api/agent/sync-tournaments", self.base_url);
         let body = SyncRequest {
             device,
             poker_room,

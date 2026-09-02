@@ -1,5 +1,34 @@
 use std::path::PathBuf;
 
+/// Dois tipos de arquivo que o agente varre — hand history (mãos jogadas)
+/// e resumo de torneio (buy-in/colocação/premiação, sem as mãos). São
+/// arquivos diferentes, em pastas diferentes, e alimentam endpoints
+/// diferentes no backend (ver `kind_to_endpoint` no crate `sync-client` e
+/// os dois botões "Importar mãos"/"Importar torneios" na UI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileKind {
+    HandHistory,
+    TournamentSummary,
+}
+
+impl FileKind {
+    pub fn slug(self) -> &'static str {
+        match self {
+            FileKind::HandHistory => "hands",
+            FileKind::TournamentSummary => "tournaments",
+        }
+    }
+
+    pub fn from_slug(slug: &str) -> Option<FileKind> {
+        match slug {
+            "hands" => Some(FileKind::HandHistory),
+            "tournaments" => Some(FileKind::TournamentSummary),
+            _ => None,
+        }
+    }
+}
+
 /// Salas de poker suportadas no MVP do agente. `slug()` é o valor enviado
 /// pro backend (coluna `poker_room` de `hand_reviews`/`hand_sync_batches`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -80,11 +109,34 @@ impl PokerRoom {
         }
     }
 
-    /// Pastas onde o cliente dessa sala plausivelmente grava hand history,
-    /// para o sistema operacional atual. Caminhos que não existem no disco
-    /// são descartados por quem chama (ver `discover_files`), então listar
-    /// candidatos "a mais" aqui é seguro.
-    pub fn default_search_paths(self) -> Vec<PathBuf> {
+    /// Nome(s) da subpasta de resumo de torneio (Tournament Summary)
+    /// dentro da pasta do cliente — arquivo separado da hand history, com
+    /// buy-in/colocação/premiação em vez das mãos jogadas. Só o nome
+    /// PokerStars ("TournamentSummary") é confirmado; as demais salas
+    /// caem no mesmo nome por falta de amostra real — mesmo status
+    /// "best-effort" que `client_folder_names`/`sniff` já documentam pra
+    /// PartyPoker/888poker/ACR.
+    fn tournament_summary_subfolder_names(self) -> &'static [&'static str] {
+        match self {
+            PokerRoom::PokerStars => &["TournamentSummary"],
+            PokerRoom::Acr => &["TS", "TournamentSummary"],
+            _ => &["TournamentSummary"],
+        }
+    }
+
+    fn subfolder_names(self, kind: FileKind) -> &'static [&'static str] {
+        match kind {
+            FileKind::HandHistory => self.history_subfolder_names(),
+            FileKind::TournamentSummary => self.tournament_summary_subfolder_names(),
+        }
+    }
+
+    /// Pastas onde o cliente dessa sala plausivelmente grava hand history
+    /// ou resumo de torneio (`kind`), para o sistema operacional atual.
+    /// Caminhos que não existem no disco são descartados por quem chama
+    /// (ver `discover_files`), então listar candidatos "a mais" aqui é
+    /// seguro.
+    pub fn default_search_paths(self, kind: FileKind) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         let home = dirs::home_dir();
         let documents = dirs::document_dir();
@@ -92,7 +144,7 @@ impl PokerRoom {
         let data_local = dirs::data_local_dir(); // %LOCALAPPDATA% no Windows
 
         for folder in self.client_folder_names() {
-            for sub in self.history_subfolder_names() {
+            for sub in self.subfolder_names(kind) {
                 if let Some(doc) = &documents {
                     roots.push(doc.join(folder).join(sub));
                 }
@@ -134,6 +186,36 @@ impl PokerRoom {
                     || lower.contains("americas cardroom")
                     || head.contains("Stage #")
             }
+        }
+    }
+
+    /// Mesma ideia de `sniff`, pro resumo de torneio em vez da mão. Só
+    /// PokerStars é confirmado (formato documentado, "PokerStars
+    /// Tournament #NNN" / "Torneio PokerStars #NNN" no cabeçalho); as
+    /// demais salas são best-effort, sem amostra real — mesmo status do
+    /// resto do arquivo (ver `sniff`).
+    pub fn sniff_tournament_summary(self, head: &str) -> bool {
+        match self {
+            PokerRoom::PokerStars => {
+                head.contains("PokerStars Tournament #") || head.contains("Torneio PokerStars #")
+            }
+            PokerRoom::GgPoker => head.contains("GGPoker Tournament") || head.contains("Tournament #"),
+            PokerRoom::PartyPoker => {
+                head.to_lowercase().contains("partypoker") && head.to_lowercase().contains("tournament")
+            }
+            PokerRoom::Poker888 => head.contains("888poker") && head.to_lowercase().contains("tournament"),
+            PokerRoom::Acr => {
+                let lower = head.to_lowercase();
+                (lower.contains("winning poker network") || lower.contains("americas cardroom"))
+                    && lower.contains("tournament")
+            }
+        }
+    }
+
+    pub fn sniff_kind(self, kind: FileKind, head: &str) -> bool {
+        match kind {
+            FileKind::HandHistory => self.sniff(head),
+            FileKind::TournamentSummary => self.sniff_tournament_summary(head),
         }
     }
 }

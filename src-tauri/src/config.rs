@@ -32,10 +32,25 @@ pub struct AppConfig {
     pub device_id: String,
     #[serde(default = "default_device_name")]
     pub device_name: String,
-    /// Pastas adicionais escolhidas manualmente pelo usuário, por sala
-    /// (slug de PokerRoom) — somam-se aos caminhos padrão do SO.
+    /// Pastas adicionais escolhidas manualmente pelo usuário, por TIPO de
+    /// arquivo (slug de FileKind: "hands"/"tournaments") — somam-se aos
+    /// caminhos padrão do SO, varridas em todas as salas de uma vez (a UI
+    /// não pede mais "escolha a sala" — ela descobre sozinha, por sniff,
+    /// de qual sala cada arquivo é). Antes era por sala; virou por tipo
+    /// quando a tela de import deixou de ser "uma sala por vez" e passou a
+    /// ser só "mãos" ou "torneios" (2026-09).
     #[serde(default)]
     pub extra_folders: HashMap<String, Vec<String>>,
+
+    /// Liga a sincronização periódica em background (padrão: ligado) — sem
+    /// isso o jogador precisava lembrar de clicar em "Sincronizar agora"
+    /// depois de cada sessão. Ver `spawn_auto_sync` em lib.rs.
+    #[serde(default = "default_true")]
+    pub auto_sync_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_base_url() -> String {
@@ -64,6 +79,7 @@ impl Default for AppConfig {
             device_id: new_device_id(),
             device_name: default_device_name(),
             extra_folders: HashMap::new(),
+            auto_sync_enabled: true,
         }
     }
 }
