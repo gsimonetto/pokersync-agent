@@ -4,9 +4,10 @@ mod keychain;
 
 use config::AppConfig;
 use keychain::Tokens;
-use scanner::{discover_files, read_pending, PokerRoom, SyncState};
+use scanner::{discover_files, read_pending, FileKind, PokerRoom, SyncState};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
 use sync_client::{chunk_files, DeviceInfo, SyncClient, SyncFile, DEFAULT_BATCH_SIZE};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -14,6 +15,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
+
+/// Intervalo do sync automático em background — curto o bastante pra uma
+/// sessão de torneio aparecer no PokerSync pouco depois de terminar, sem
+/// martelar disco/rede o dia inteiro parado numa mesa. Ver `spawn_auto_sync`.
+const AUTO_SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 struct AppState {
     config_path: PathBuf,
@@ -33,6 +39,7 @@ struct ConfigDto {
     user_email: Option<String>,
     device_name: String,
     extra_folders: std::collections::HashMap<String, Vec<String>>,
+    auto_sync_enabled: bool,
 }
 
 fn config_dto(c: &AppConfig) -> ConfigDto {
@@ -42,6 +49,7 @@ fn config_dto(c: &AppConfig) -> ConfigDto {
         user_email: c.user_email.clone(),
         device_name: c.device_name.clone(),
         extra_folders: c.extra_folders.clone(),
+        auto_sync_enabled: c.auto_sync_enabled,
     }
 }
 
@@ -83,11 +91,18 @@ fn save_device_name(state: State<AppState>, device_name: String) -> Result<(), S
 #[tauri::command]
 fn save_extra_folders(
     state: State<AppState>,
-    room: String,
+    kind: String,
     folders: Vec<String>,
 ) -> Result<(), String> {
     let mut cfg = state.config.lock().unwrap();
-    cfg.extra_folders.insert(room, folders);
+    cfg.extra_folders.insert(kind, folders);
+    cfg.save(&state.config_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_auto_sync_enabled(state: State<AppState>, enabled: bool) -> Result<(), String> {
+    let mut cfg = state.config.lock().unwrap();
+    cfg.auto_sync_enabled = enabled;
     cfg.save(&state.config_path).map_err(|e| e.to_string())
 }
 
@@ -249,9 +264,10 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 struct RoomInfo {
     slug: String,
     display_name: String,
-    default_folders: Vec<String>,
 }
 
+/// Só pra UI ter rótulo bonito por sala nos resultados (a tela não pede
+/// mais "escolha a sala" — ver comentário em AppConfig::extra_folders).
 #[tauri::command]
 fn list_rooms() -> Vec<RoomInfo> {
     PokerRoom::ALL
@@ -259,21 +275,47 @@ fn list_rooms() -> Vec<RoomInfo> {
         .map(|r| RoomInfo {
             slug: r.slug().to_string(),
             display_name: r.display_name().to_string(),
-            default_folders: r
-                .default_search_paths()
-                .into_iter()
-                .map(|p| p.to_string_lossy().to_string())
-                .collect(),
         })
         .collect()
 }
 
-fn roots_for(state: &AppState, room: PokerRoom) -> Vec<PathBuf> {
-    let mut roots = room.default_search_paths();
-    if let Some(extra) = state.config.lock().unwrap().extra_folders.get(room.slug()) {
-        roots.extend(extra.iter().map(PathBuf::from));
-    }
-    roots
+fn parse_kind(slug: &str) -> Result<FileKind, String> {
+    FileKind::from_slug(slug).ok_or_else(|| format!("Tipo de import desconhecido: {slug}"))
+}
+
+/// Nome do arquivo de estado por (sala, tipo) — mãos e torneios têm
+/// progresso de sync independente, mesmo quando compartilham a mesma
+/// sala/pasta.
+fn state_file_name(room: PokerRoom, kind: FileKind) -> String {
+    format!("{}-{}.json", room.slug(), kind.slug())
+}
+
+/// Pastas onde varrer esse tipo de arquivo, em TODAS as salas de uma vez —
+/// os caminhos padrão de cada sala pro tipo pedido, mais as pastas extras
+/// que o usuário escolheu manualmente (que não são mais por sala: uma
+/// pasta manual é varrida contra todas as salas, o sniff decide de qual
+/// sala cada arquivo é).
+fn discover_all(state: &AppState, kind: FileKind) -> Vec<(PokerRoom, Vec<scanner::DiscoveredFile>)> {
+    let extra: Vec<PathBuf> = state
+        .config
+        .lock()
+        .unwrap()
+        .extra_folders
+        .get(kind.slug())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+
+    PokerRoom::ALL
+        .into_iter()
+        .map(|room| {
+            let mut roots = room.default_search_paths(kind);
+            roots.extend(extra.iter().cloned());
+            (room, discover_files(&roots, room, kind))
+        })
+        .collect()
 }
 
 #[derive(serde::Serialize)]
@@ -284,19 +326,17 @@ struct ScanSummary {
 }
 
 /// Só varre e conta — não sincroniza nada. É o que a UI mostra antes do
-/// usuário confirmar "Sincronizar agora".
+/// usuário confirmar "Verificar agora" (ou o que o sync automático usa
+/// internamente pra saber se vale a pena sincronizar).
 #[tauri::command]
-fn scan_preview(state: State<AppState>, rooms: Vec<String>) -> Result<Vec<ScanSummary>, String> {
+fn scan_preview(state: State<AppState>, kind: String) -> Result<Vec<ScanSummary>, String> {
+    let kind = parse_kind(&kind)?;
     let mut out = Vec::new();
-    for slug in rooms {
-        let room =
-            PokerRoom::from_slug(&slug).ok_or_else(|| format!("Sala desconhecida: {slug}"))?;
-        let roots = roots_for(&state, room);
-        let found = discover_files(&roots, room);
-        let sync_state = SyncState::load(&state.state_dir.join(format!("{}.json", room.slug())));
+    for (room, found) in discover_all(&state, kind) {
+        let sync_state = SyncState::load(&state.state_dir.join(state_file_name(room, kind)));
         let pending = read_pending(&found, &sync_state).len();
         out.push(ScanSummary {
-            room: slug,
+            room: room.slug().to_string(),
             files_found: found.len(),
             files_pending: pending,
         });
@@ -304,11 +344,11 @@ fn scan_preview(state: State<AppState>, rooms: Vec<String>) -> Result<Vec<ScanSu
     Ok(out)
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Default)]
 struct SyncSummary {
     room: String,
     files_synced: usize,
-    total_hands: u32,
+    total_items: u32,
     imported: u32,
     duplicates: u32,
     errors: u32,
@@ -326,11 +366,11 @@ async fn refresh_client(base_url: &str) -> Result<SyncClient, String> {
     Ok(SyncClient::new(base_url.to_string(), result.access_token))
 }
 
-#[tauri::command]
-async fn sync_now(
-    state: State<'_, AppState>,
-    rooms: Vec<String>,
-) -> Result<Vec<SyncSummary>, String> {
+/// Sincroniza um tipo de arquivo (mãos ou torneios) em todas as salas.
+/// Usado tanto pelo comando `sync_now` (clique manual) quanto pelo laço de
+/// sync automático em background (`spawn_auto_sync`) — mesma lógica,
+/// evita os dois caminhos divergirem.
+async fn sync_kind(state: &AppState, kind: FileKind) -> Result<Vec<SyncSummary>, String> {
     let (base_url, token, device) = {
         let cfg = state.config.lock().unwrap();
         if cfg.base_url.is_empty() {
@@ -354,23 +394,15 @@ async fn sync_now(
     let mut already_refreshed = false;
 
     let mut out = Vec::new();
-    for slug in rooms {
-        let room =
-            PokerRoom::from_slug(&slug).ok_or_else(|| format!("Sala desconhecida: {slug}"))?;
-        let roots = roots_for(&state, room);
-        let found = discover_files(&roots, room);
-        let state_path = state.state_dir.join(format!("{}.json", room.slug()));
+    for (room, found) in discover_all(state, kind) {
+        let state_path = state.state_dir.join(state_file_name(room, kind));
         let mut sync_state = SyncState::load(&state_path);
         let pending = read_pending(&found, &sync_state);
 
         if pending.is_empty() {
             out.push(SyncSummary {
-                room: slug,
-                files_synced: 0,
-                total_hands: 0,
-                imported: 0,
-                duplicates: 0,
-                errors: 0,
+                room: room.slug().to_string(),
+                ..Default::default()
             });
             continue;
         }
@@ -383,7 +415,7 @@ async fn sync_now(
             })
             .collect();
 
-        let mut total_hands = 0u32;
+        let mut total_items = 0u32;
         let mut imported = 0u32;
         let mut duplicates = 0u32;
         let mut errors = 0u32;
@@ -392,19 +424,36 @@ async fn sync_now(
             .into_iter()
             .zip(pending.chunks(DEFAULT_BATCH_SIZE))
         {
-            let mut attempt = client.sync_batch(&device, room.slug(), &batch_files).await;
-            if let Err(sync_client::SyncError::Rejected { status: 401, .. }) = &attempt {
-                if !already_refreshed {
-                    already_refreshed = true;
-                    client = refresh_client(&base_url).await?;
-                    attempt = client.sync_batch(&device, room.slug(), &batch_files).await;
+            let (total, imp, dup, err) = match kind {
+                FileKind::HandHistory => {
+                    let mut attempt = client.sync_batch(&device, room.slug(), &batch_files).await;
+                    if let Err(sync_client::SyncError::Rejected { status: 401, .. }) = &attempt {
+                        if !already_refreshed {
+                            already_refreshed = true;
+                            client = refresh_client(&base_url).await?;
+                            attempt = client.sync_batch(&device, room.slug(), &batch_files).await;
+                        }
+                    }
+                    let r = attempt.map_err(|e| e.to_string())?;
+                    (r.total_hands, r.imported, r.duplicates, r.errors)
                 }
-            }
-            let result = attempt.map_err(|e| e.to_string())?;
-            total_hands += result.total_hands;
-            imported += result.imported;
-            duplicates += result.duplicates;
-            errors += result.errors;
+                FileKind::TournamentSummary => {
+                    let mut attempt = client.sync_tournament_batch(&device, room.slug(), &batch_files).await;
+                    if let Err(sync_client::SyncError::Rejected { status: 401, .. }) = &attempt {
+                        if !already_refreshed {
+                            already_refreshed = true;
+                            client = refresh_client(&base_url).await?;
+                            attempt = client.sync_tournament_batch(&device, room.slug(), &batch_files).await;
+                        }
+                    }
+                    let r = attempt.map_err(|e| e.to_string())?;
+                    (r.total_files, r.imported, r.duplicates, r.errors)
+                }
+            };
+            total_items += total;
+            imported += imp;
+            duplicates += dup;
+            errors += err;
             for p in batch_pending {
                 sync_state.mark_synced(p.path.clone(), p.signature);
             }
@@ -412,15 +461,69 @@ async fn sync_now(
 
         sync_state.save(&state_path).map_err(|e| e.to_string())?;
         out.push(SyncSummary {
-            room: slug,
+            room: room.slug().to_string(),
             files_synced: pending.len(),
-            total_hands,
+            total_items,
             imported,
             duplicates,
             errors,
         });
     }
     Ok(out)
+}
+
+#[tauri::command]
+async fn sync_now(state: State<'_, AppState>, kind: String) -> Result<Vec<SyncSummary>, String> {
+    sync_kind(&state, parse_kind(&kind)?).await
+}
+
+/// Sync automático em background: dispara mãos + torneios a cada
+/// `AUTO_SYNC_INTERVAL`, sem depender do jogador clicar em nada. Falha
+/// silenciosamente (não logado, sem rede, URL não configurada) — não é
+/// pra encher a tela de erro por um laço que roda sozinho; erros reais
+/// ainda aparecem quando o jogador abre a janela e vê "há X sem
+/// sincronizar" nunca mudar. Emite `auto-sync-result` só quando dá certo
+/// e importa algo de fato, pra UI mostrar sem virar barulho.
+fn spawn_auto_sync(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(AUTO_SYNC_INTERVAL);
+        interval.tick().await; // primeiro tick é imediato; espera 1 ciclo antes do primeiro sync
+        loop {
+            interval.tick().await;
+            let state = app.state::<AppState>();
+            let enabled = state.config.lock().unwrap().auto_sync_enabled;
+            if !enabled || keychain::load().is_none() {
+                continue;
+            }
+            let mut imported_total = 0u32;
+            let mut synced_any = false;
+            for kind in [FileKind::HandHistory, FileKind::TournamentSummary] {
+                if let Ok(summaries) = sync_kind(&state, kind).await {
+                    for s in &summaries {
+                        imported_total += s.imported;
+                        if s.files_synced > 0 {
+                            synced_any = true;
+                        }
+                    }
+                }
+            }
+            if synced_any {
+                let _ = app.emit(
+                    "auto-sync-result",
+                    serde_json::json!({ "imported": imported_total, "at": now_epoch_secs() }),
+                );
+            }
+        }
+    });
+}
+
+fn now_epoch_secs() -> String {
+    // Sem dependência extra só pra isso: formato ISO 8601 simples via
+    // SystemTime, suficiente pra UI mostrar "última sincronização".
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}", now.as_secs())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -447,6 +550,10 @@ pub fn run() {
                 config: Mutex::new(config),
                 pending_google_state: Mutex::new(None),
             });
+
+            // Sync automático em background — roda o dia inteiro sozinho,
+            // sem o jogador precisar abrir a janela e clicar em nada.
+            spawn_auto_sync(app.handle().clone());
 
             // Login com Google: pokersync-agent://auth?access_token=...
             // volta aqui depois do navegador do sistema completar o OAuth
@@ -512,6 +619,7 @@ pub fn run() {
             save_base_url,
             save_device_name,
             save_extra_folders,
+            set_auto_sync_enabled,
             login,
             start_google_login,
             paste_login_link,

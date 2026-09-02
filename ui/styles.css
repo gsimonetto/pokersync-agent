@@ -62,6 +62,26 @@ body::after {
 
 .hidden { display: none !important; }
 
+/* ---------- Tela 0: splash (vídeo antes do login) ---------- */
+#screen-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--void);
+}
+#splash-video { width: 100%; height: 100%; object-fit: contain; }
+.splash-skip {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  color: var(--muted);
+  z-index: 1;
+}
+.splash-skip:hover { color: var(--ink); }
+
 /* ---------- Tela de login ---------- */
 #screen-login {
   min-height: 100vh;
@@ -244,39 +264,65 @@ body::after {
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .section-heading h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0; }
 
-/* Cards de sala */
-.rooms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 18px; }
-.room-card {
-  --acc: var(--training);
-  position: relative;
+/* ---------- Importação (mãos / torneios) ---------- */
+.auto-sync-status {
+  font-size: 12px;
+  color: var(--positive);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.auto-sync-status::before {
+  content: "";
+  width: 6px; height: 6px; border-radius: 999px;
+  background: var(--positive);
+  flex-shrink: 0;
+}
+.auto-sync-status.is-off { color: var(--muted); }
+.auto-sync-status.is-off::before { background: var(--muted); }
+
+.import-buttons { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.import-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: 12px;
-  padding: 14px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
-  overflow: hidden;
+  padding: 16px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  color: var(--ink);
+  transition: border-color 0.2s ease, transform 0.15s ease;
 }
-.room-card:hover { border-color: var(--acc); box-shadow: 0 12px 30px -12px var(--acc); transform: translateY(-1px); }
-.room-card.is-off { opacity: 0.5; }
-.room-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.room-badge {
-  width: 34px; height: 34px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--acc) 22%, var(--elevated));
-  border: 1px solid color-mix(in srgb, var(--acc) 45%, transparent);
-  color: var(--acc);
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 700;
-  font-size: 12px;
-  letter-spacing: -0.02em;
+.import-btn:hover { border-color: var(--training); transform: translateY(-1px); }
+.import-btn-icon {
   flex-shrink: 0;
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--training);
 }
-.room-name-wrap { flex: 1; min-width: 0; }
-.room-name { font-size: 13.5px; font-weight: 600; }
-.room-toggle { display: flex; align-items: center; }
-.room-toggle input { accent-color: var(--acc); width: 16px; height: 16px; cursor: pointer; }
+.import-btn-icon svg { width: 19px; height: 19px; }
+.import-btn-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.import-btn-title { font-size: 14px; font-weight: 600; }
+.import-btn-hint { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
 
-.room-folders { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; min-height: 22px; }
+.import-panel {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+.import-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.import-panel-header h3 { font-size: 14px; font-weight: 600; margin: 0; }
+
+.folder-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; min-height: 22px; }
 .folder-chip {
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--elevated);
@@ -295,14 +341,12 @@ body::after {
 .folder-chip .chip-remove:hover { color: var(--negative); }
 .folder-chip.empty { color: var(--muted); font-style: italic; }
 
-.room-scan-status { font-size: 11px; color: var(--muted); margin-top: 4px; }
-.room-scan-status.has-pending { color: var(--evolution); }
-
 .actions-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
 .actions-row .status-msg { margin: 0; }
 
 table.results-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12.5px; }
 table.results-table th, table.results-table td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--hairline); }
+.room-dot { display: inline-block; width: 7px; height: 7px; border-radius: 999px; margin-right: 6px; }
 table.results-table th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
 
 /* Configurações avançadas como modal — antes era um bloco no fim da
