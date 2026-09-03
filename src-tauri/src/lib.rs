@@ -526,9 +526,47 @@ fn now_epoch_secs() -> String {
     format!("{}", now.as_secs())
 }
 
+/// Repassa cada `pokersync-agent://auth?...` encontrado pro mesmo caminho
+/// de conclusão de login — usado tanto pelo handler normal de deep link
+/// (`on_open_url`, quando o SO acha o app já rodando e sabe repassar sem
+/// abrir instância nova) quanto pelo handler de instância única logo
+/// abaixo (quando o SO abre uma instância nova em vez disso — ver
+/// `tauri_plugin_single_instance::init` em `run()`).
+fn handle_deep_link_urls(app: &AppHandle, urls: impl IntoIterator<Item = url::Url>) {
+    for url in urls {
+        let Some((access_token, refresh_token, received_state)) = parse_auth_deep_link(&url) else {
+            continue;
+        };
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            complete_google_login(handle, access_token, refresh_token, received_state).await;
+        });
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Precisa ser o primeiro plugin registrado (exigência do próprio
+        // tauri-plugin-single-instance). No Windows e no Linux, o deep
+        // link plugin (`on_open_url` abaixo) só recebe a URL automaticamente
+        // quando o app AINDA NÃO estava rodando — se o jogador já tinha o
+        // agente aberto (caso comum: ele está na tela de login) e confirma
+        // o login com Google no navegador, o SO abre uma instância NOVA do
+        // executável passando a URL como argumento de linha de comando, em
+        // vez de avisar a instância existente. Sem isto, essa instância
+        // nova simplesmente não faz nada com a URL e o login se perde —
+        // era por isso que o redirecionamento automático falhava mesmo com
+        // o esquema `pokersync-agent://` registrado corretamente pelo
+        // instalador.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let urls = argv.into_iter().filter_map(|arg| url::Url::parse(&arg).ok());
+            handle_deep_link_urls(app, urls);
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
@@ -564,15 +602,7 @@ pub fn run() {
             // caminho manual (mesmo parser, ver `parse_auth_deep_link`).
             let deep_link_handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
-                for url in event.urls() {
-                    let Some((access_token, refresh_token, received_state)) = parse_auth_deep_link(&url) else {
-                        continue;
-                    };
-                    let handle = deep_link_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        complete_google_login(handle, access_token, refresh_token, received_state).await;
-                    });
-                }
+                handle_deep_link_urls(&deep_link_handle, event.urls());
             });
 
             let show_i = MenuItem::with_id(app, "show", "Mostrar", true, None::<&str>)?;
