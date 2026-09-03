@@ -31,7 +31,9 @@
   },
   "plugins": {
     "deep-link": {
-      "schemes": ["pokersync-agent"]
+      "desktop": {
+        "schemes": ["pokersync-agent"]
+      }
     }
   }
 }
