@@ -27,3 +27,4 @@ tauri-plugin-opener = "2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 rand = "0.8"
 url = "2"
+base64 = "0.22"
