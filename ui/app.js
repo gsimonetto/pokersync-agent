@@ -121,7 +121,7 @@ el("btn-google-login").addEventListener("click", async () => {
   }
 });
 
-// Caminho manual: o SO nem sempre sabe abrir pokersync-agent:// sozinho
+// Caminho manual: o SO nem sempre sabe abrir radar-pokersync:// sozinho
 // (varia por SO/instalação) — sem isso, quem confirma no Google e o app
 // não reabre fica travado sem nenhuma saída.
 el("btn-show-paste-link").addEventListener("click", () => {
