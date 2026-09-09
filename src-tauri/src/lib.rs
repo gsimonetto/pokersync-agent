@@ -559,9 +559,18 @@ pub fn run() {
             // volta aqui depois do navegador do sistema completar o OAuth
             // (ver start_google_login e app/agent-login no produto). Só
             // funciona quando o SO sabe abrir o esquema customizado — nem
-            // sempre acontece sozinho (varia por SO/forma de instalação),
-            // por isso existe também o comando `paste_login_link` como
-            // caminho manual (mesmo parser, ver `parse_auth_deep_link`).
+            // sempre acontece sozinho (varia por SO/forma de instalação:
+            // instalador que não rodou com permissão de escrever no
+            // registro, versão antiga que registrou o esquema errado
+            // antes do rename, AppImage sem integração no Linux etc.).
+            // `register_all()` reforça esse registro toda vez que o app
+            // abre — reescreve a chave do Windows apontando pro executável
+            // atual, sem precisar de reinstalação. Continua existindo
+            // também o comando `paste_login_link` como caminho manual pra
+            // quando mesmo assim não funcionar (mesmo parser, ver
+            // `parse_auth_deep_link`).
+            let _ = app.deep_link().register_all();
+
             let deep_link_handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {

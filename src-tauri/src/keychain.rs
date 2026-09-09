@@ -4,11 +4,14 @@
 //! não é segredo e continua em `config.rs`.
 //!
 //! O Windows Credential Manager recusa uma "senha" com mais de 2560
-//! caracteres (erro "Attribute 'password encoded as UTF-16' is longer
-//! than platform limit of 2560 chars") — e o JSON com os dois tokens
-//! juntos passa disso com folga quando o access_token é um JWT grande.
-//! Por isso guardamos em pedaços menores, um por entrada do keychain, em
-//! vez de um bloco só.
+//! *bytes* (erro "Attribute 'password encoded as UTF-16' is longer than
+//! platform limit of 2560 chars" — a mensagem fala em "chars", mas o
+//! `keyring` mede `password.encode_utf16().count() * 2`, ou seja, bytes
+//! de UTF-16: 2 por caractere ASCII. Isso dá só ~1280 caracteres de
+//! verdade por entrada, bem menos do que os "2560 chars" que a mensagem
+//! sugere) — e o JSON com os dois tokens juntos passa disso com folga
+//! quando o access_token é um JWT grande. Por isso guardamos em pedaços
+//! menores, um por entrada do keychain, em vez de um bloco só.
 
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
@@ -20,9 +23,11 @@ const SERVICE_LEGACY: &str = "com.pokersync.agent";
 const ACCOUNT_LEGACY: &str = "session";
 const ACCOUNT_COUNT: &str = "session-chunk-count";
 
-/// Bem abaixo do limite de 2560 caracteres do Windows — sobra margem pra
-/// backends de outros SOs, que costumam ser mais folgados.
-const CHUNK_SIZE: usize = 2000;
+/// O limite real do Windows é 2560 *bytes* em UTF-16 (2 bytes por
+/// caractere ASCII) — ou seja, ~1280 caracteres, não 2560. 1000 fica bem
+/// abaixo disso, com margem pra outros SOs (mais folgados) e pra
+/// variação de encoding.
+const CHUNK_SIZE: usize = 1000;
 /// Trava de segurança contra um número de pedaços absurdo (ex.: entrada
 /// de contagem corrompida) — nenhum token real chega perto disso.
 const MAX_CHUNKS: usize = 50;
@@ -76,13 +81,14 @@ pub fn load() -> Option<Tokens> {
     load_chunked().or_else(load_legacy)
 }
 
+fn split_into_chunks(raw: &str) -> Vec<String> {
+    let chars: Vec<char> = raw.chars().collect();
+    chars.chunks(CHUNK_SIZE).map(|c| c.iter().collect()).collect()
+}
+
 pub fn save(tokens: &Tokens) -> Result<(), String> {
     let raw = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
-    let chars: Vec<char> = raw.chars().collect();
-    let chunks: Vec<String> = chars
-        .chunks(CHUNK_SIZE)
-        .map(|c| c.iter().collect())
-        .collect();
+    let chunks = split_into_chunks(&raw);
     // Não deveria acontecer com tokens reais, mas mais vale falhar com uma
     // mensagem clara do que gravar pela metade.
     if chunks.len() > MAX_CHUNKS {
@@ -147,5 +153,48 @@ pub fn clear() -> Result<(), String> {
     match legacy_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mesmo limite que o Windows aplica de verdade (`CRED_MAX_CREDENTIAL_BLOB_SIZE`
+    /// no crate `keyring`) — em *bytes* de UTF-16, não em caracteres. Isso já
+    /// mordeu a gente uma vez: um `CHUNK_SIZE` "abaixo de 2560" mas medido em
+    /// caracteres ainda estourava o limite real, que é a metade disso.
+    const CRED_MAX_CREDENTIAL_BLOB_SIZE_BYTES: usize = 2560;
+
+    #[test]
+    fn chunks_never_exceed_windows_real_byte_limit() {
+        let raw = serde_json::to_string(&Tokens {
+            access_token: "a".repeat(5000),
+            refresh_token: "r".repeat(500),
+        })
+        .unwrap();
+
+        let chunks = split_into_chunks(&raw);
+        assert!(chunks.len() > 1, "esperava mais de um pedaço pra esse tamanho");
+        for chunk in &chunks {
+            let utf16_bytes = chunk.encode_utf16().count() * 2;
+            assert!(
+                utf16_bytes <= CRED_MAX_CREDENTIAL_BLOB_SIZE_BYTES,
+                "pedaço com {utf16_bytes} bytes UTF-16 estoura o limite real do Windows ({CRED_MAX_CREDENTIAL_BLOB_SIZE_BYTES})"
+            );
+        }
+    }
+
+    #[test]
+    fn chunks_reassemble_into_original() {
+        let raw = serde_json::to_string(&Tokens {
+            access_token: "x".repeat(3333),
+            refresh_token: "refresh-token-normal".to_string(),
+        })
+        .unwrap();
+
+        let chunks = split_into_chunks(&raw);
+        let rejoined: String = chunks.concat();
+        assert_eq!(rejoined, raw);
     }
 }
