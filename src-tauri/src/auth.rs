@@ -6,6 +6,7 @@
 //! senha do usuário passa por aqui além do POST direto ao GoTrue; só os
 //! tokens resultantes são guardados (no keychain, ver `keychain.rs`).
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use crate::config::{SUPABASE_ANON_KEY, SUPABASE_URL};
 use serde::Deserialize;
 
@@ -89,10 +90,33 @@ pub async fn refresh_session(refresh_token: &str) -> Result<LoginResult, String>
     })
 }
 
+/// O access_token é um JWT — o claim `email` já vem embutido nele
+/// (assinado pelo GoTrue no momento em que o Google devolveu o login), só
+/// decodificar a parte do meio em base64. Evita uma chamada de rede a
+/// mais depois do deep link (que podia falhar — proxy, DNS, o que for —
+/// sem aparecer erro nenhum pro jogador, só deixando "Conectado como"
+/// em branco).
+fn decode_email_from_jwt(access_token: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Claims {
+        email: Option<String>,
+    }
+    let payload_b64 = access_token.split('.').nth(1)?;
+    let payload = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+    serde_json::from_slice::<Claims>(&payload).ok()?.email
+}
+
 /// O deep link de volta do login com Google (ver `lib.rs`) só traz os
 /// tokens — busca o email aqui pra exibir "Conectado como ..." na UI,
-/// igual ao fluxo de email/senha.
+/// igual ao fluxo de email/senha. Tenta primeiro decodificar do próprio
+/// token (rápido, sem rede); só bate no GoTrue se por algum motivo o
+/// token não tiver o claim (não deveria acontecer com os tokens que o
+/// Supabase emite hoje, mas mais vale ter o caminho de volta).
 pub async fn fetch_user_email(access_token: &str) -> Option<String> {
+    if let Some(email) = decode_email_from_jwt(access_token) {
+        return Some(email);
+    }
+
     let client = reqwest::Client::new();
     let url = format!("{SUPABASE_URL}/auth/v1/user");
     let resp = client
@@ -106,4 +130,33 @@ pub async fn fetch_user_email(access_token: &str) -> Option<String> {
         return None;
     }
     resp.json::<GoTrueUser>().await.ok()?.email
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_email_from_jwt;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+    fn fake_jwt(payload_json: &str) -> String {
+        let header = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let payload = URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
+        format!("{header}.{payload}.fake-signature")
+    }
+
+    #[test]
+    fn decodes_email_from_real_shaped_token() {
+        let token = fake_jwt(r#"{"sub":"123","email":"jogador@pokersync.com.br","role":"authenticated"}"#);
+        assert_eq!(decode_email_from_jwt(&token).as_deref(), Some("jogador@pokersync.com.br"));
+    }
+
+    #[test]
+    fn returns_none_when_claim_missing() {
+        let token = fake_jwt(r#"{"sub":"123","role":"authenticated"}"#);
+        assert_eq!(decode_email_from_jwt(&token), None);
+    }
+
+    #[test]
+    fn returns_none_for_garbage_input() {
+        assert_eq!(decode_email_from_jwt("nao-e-um-jwt"), None);
+    }
 }
