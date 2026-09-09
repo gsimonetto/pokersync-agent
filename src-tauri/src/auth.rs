@@ -2,7 +2,7 @@
 //! produto web). Dois caminhos: email/senha via password grant aqui
 //! embaixo, ou Google — que não roda dentro da janela nativa do Tauri,
 //! então abre no navegador do sistema (ver `lib.rs::start_google_login`)
-//! e volta pelo deep link `pokersync-agent://auth`. Em nenhum dos dois a
+//! e volta pelo deep link `radar-pokersync://auth`. Em nenhum dos dois a
 //! senha do usuário passa por aqui além do POST direto ao GoTrue; só os
 //! tokens resultantes são guardados (no keychain, ver `keychain.rs`).
 

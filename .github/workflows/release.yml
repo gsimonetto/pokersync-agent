@@ -1,6 +1,6 @@
 name: Release
 
-# Gera os instaladores do PokerSync Agent por SO e publica como GitHub
+# Gera os instaladores do Radar PokerSync por SO e publica como GitHub
 # Release (draft) com os binários anexados — o jeito mais simples de testar
 # sem precisar instalar Rust/Tauri localmente.
 #
@@ -58,9 +58,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__
-          releaseName: "PokerSync Agent v__VERSION__"
+          releaseName: "Radar PokerSync v__VERSION__"
           releaseBody: |
-            Instalador do PokerSync Agent para teste. Veja o README para o
+            Instalador do Radar PokerSync para teste. Veja o README para o
             passo a passo (URL do PokerSync + login).
           releaseDraft: true
           prerelease: true

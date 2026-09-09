@@ -125,7 +125,7 @@ async fn login(
 
 /// Abre o navegador do sistema na tela de login do agente (Google não
 /// funciona dentro da webview embutida). O resultado volta assíncrono,
-/// pelo deep link `pokersync-agent://auth` — ver `handle_deep_link`.
+/// pelo deep link `radar-pokersync://auth` — ver `handle_deep_link`.
 #[tauri::command]
 fn start_google_login(app: AppHandle, state: State<AppState>) -> Result<(), String> {
     use rand::Rng;
@@ -152,10 +152,10 @@ fn start_google_login(app: AppHandle, state: State<AppState>) -> Result<(), Stri
 }
 
 /// Extrai (access_token, refresh_token, state) de uma URL
-/// `pokersync-agent://auth?...` — usado tanto pelo handler automático de
+/// `radar-pokersync://auth?...` — usado tanto pelo handler automático de
 /// deep link quanto pelo comando `paste_login_link` (colar manual).
 fn parse_auth_deep_link(url: &url::Url) -> Option<(String, String, String)> {
-    if url.scheme() != "pokersync-agent" || url.host_str() != Some("auth") {
+    if url.scheme() != "radar-pokersync" || url.host_str() != Some("auth") {
         return None;
     }
     let params: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
@@ -166,7 +166,7 @@ fn parse_auth_deep_link(url: &url::Url) -> Option<(String, String, String)> {
 }
 
 /// Caminho manual pro login com Google: quando o SO não sabe abrir
-/// `pokersync-agent://` sozinho (varia por SO/instalação — relatado como
+/// `radar-pokersync://` sozinho (varia por SO/instalação — relatado como
 /// "confirmo no navegador e fica só rodando"), a página de conclusão no
 /// produto (app/agent-login/concluido) mostra esse link pra copiar. O
 /// usuário cola aqui e o agente segue o mesmo caminho do deep link.
@@ -174,13 +174,13 @@ fn parse_auth_deep_link(url: &url::Url) -> Option<(String, String, String)> {
 async fn paste_login_link(app: AppHandle, link: String) -> Result<(), String> {
     let url = url::Url::parse(link.trim()).map_err(|_| "Link inválido — copie o link inteiro da página.".to_string())?;
     let (access_token, refresh_token, state) =
-        parse_auth_deep_link(&url).ok_or("Esse link não é um link de login do PokerSync Agent.".to_string())?;
+        parse_auth_deep_link(&url).ok_or("Esse link não é um link de login do Radar PokerSync.".to_string())?;
     complete_google_login(app, access_token, refresh_token, state).await;
     Ok(())
 }
 
 /// Chamado pelo handler de deep link (`run()`) quando
-/// `pokersync-agent://auth?...` volta do login com Google. Confere o
+/// `radar-pokersync://auth?...` volta do login com Google. Confere o
 /// nonce, resolve o email do token e salva a sessão — mesmo destino final
 /// de `login()` (email/senha), só que assíncrono e sem senha nenhuma
 /// passando pelo agente.
@@ -555,7 +555,7 @@ pub fn run() {
             // sem o jogador precisar abrir a janela e clicar em nada.
             spawn_auto_sync(app.handle().clone());
 
-            // Login com Google: pokersync-agent://auth?access_token=...
+            // Login com Google: radar-pokersync://auth?access_token=...
             // volta aqui depois do navegador do sistema completar o OAuth
             // (ver start_google_login e app/agent-login no produto). Só
             // funciona quando o SO sabe abrir o esquema customizado — nem
@@ -582,7 +582,7 @@ pub fn run() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)
-                .tooltip("PokerSync Agent")
+                .tooltip("Radar PokerSync")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(w) = app.get_webview_window("main") {

@@ -1,4 +1,4 @@
-# PokerSync Agent
+# Radar PokerSync
 
 Agente desktop (Tauri + Rust) que varre o computador do jogador em busca de
 hand histories e torneios jogados — PokerStars, GGPoker, PartyPoker, 888poker
@@ -71,7 +71,7 @@ Dois caminhos, ambos contra o mesmo GoTrue do produto web:
   política de segurança) — o botão "Continuar com Google" abre o
   **navegador do sistema** numa página dedicada do produto
   (`gsimonetto/pokersync`, `app/agent-login/`), que faz o OAuth normal e
-  devolve os tokens pro agente via deep link (`pokersync-agent://auth`,
+  devolve os tokens pro agente via deep link (`radar-pokersync://auth`,
   registrado pelo instalador — `tauri-plugin-deep-link`). Isso resolve o
   caso relatado de "logou pelo Google, a senha não pega aqui" — quem
   criou a conta assim nunca teve senha no Supabase pra começar.
