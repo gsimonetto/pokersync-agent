@@ -185,6 +185,44 @@ function renderAutoSyncStatus(justImported) {
   node.textContent = "Sincronização automática ativa — roda sozinha em background, sem precisar clicar em nada.";
 }
 
+// ---------- Auto-update ----------
+// Nunca baixa/instala sozinho: só avisa com um banner e espera o
+// jogador clicar em "Atualizar agora" -- ele pode estar no meio de uma
+// sessão, e instalar reinicia o app. `window.__TAURI__.updater` e
+// `.process` vêm dos plugins tauri-plugin-updater/tauri-plugin-process
+// (ver src-tauri/src/lib.rs) -- mesmo padrão de window.__TAURI__.dialog
+// já usado aqui, funcionando graças a "withGlobalTauri": true.
+let pendingUpdate = null;
+
+async function checkForUpdate() {
+  try {
+    const update = await window.__TAURI__.updater.check();
+    if (!update) return;
+    pendingUpdate = update;
+    el("update-banner-text").textContent = `Nova versão disponível (${update.version}).`;
+    el("update-banner").classList.remove("hidden");
+  } catch (e) {
+    // Sem rede, GitHub fora do ar, etc. -- não incomoda o jogador com
+    // erro por causa de uma verificação em background.
+    console.error("Falha ao verificar atualização:", e);
+  }
+}
+
+el("btn-update-install").addEventListener("click", async () => {
+  if (!pendingUpdate) return;
+  const btn = el("btn-update-install");
+  btn.disabled = true;
+  btn.textContent = "Baixando...";
+  try {
+    await pendingUpdate.downloadAndInstall();
+    await window.__TAURI__.process.relaunch();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "Atualizar agora";
+    setStatus(el("update-banner-text"), "Falha ao atualizar — tente de novo mais tarde.", "err");
+  }
+});
+
 // ---------- Configurações avançadas (modal) ----------
 
 function openSettings() {
@@ -393,5 +431,6 @@ async function boot() {
   if (cfg.logged_in) {
     await refreshAutostart();
     await loadRooms();
+    checkForUpdate(); // não bloqueia o boot -- só avisa quando terminar
   }
 }

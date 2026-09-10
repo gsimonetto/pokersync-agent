@@ -264,6 +264,21 @@ body::after {
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .section-heading h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0; }
 
+/* ---------- Banner de atualização disponível ---------- */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 12.5px;
+}
+.update-banner span { color: var(--ink); }
+
 /* ---------- Importação (mãos / torneios) ---------- */
 .auto-sync-status {
   font-size: 12px;

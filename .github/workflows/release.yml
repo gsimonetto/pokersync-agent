@@ -56,11 +56,22 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Assina os artefatos de auto-update (arquivo .sig por
+          # instalador + latest.json) -- sem isso o updater não confia
+          # em nenhuma versão. Secrets cadastrados manualmente em
+          # Settings > Secrets and variables > Actions (ver
+          # TAURI_UPDATER_SETUP.md).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: "Radar PokerSync v__VERSION__"
           releaseBody: |
-            Instalador do Radar PokerSync para teste. Veja o README para o
-            passo a passo (URL do PokerSync + login).
-          releaseDraft: true
-          prerelease: true
+            Nova versão do Radar PokerSync. Instale ou deixe o auto-update
+            cuidar disso a partir da próxima abertura do app.
+          # Publicada de verdade (não-draft, não-prerelease): o
+          # auto-update olha pra release "latest" do repositório, então
+          # uma tag vX.Y.Z já entrega a atualização pros usuários assim
+          # que o build termina.
+          releaseDraft: false
+          prerelease: false
