@@ -32,6 +32,10 @@ const IMPORT_KIND_META = {
 function setStatus(node, message, kind) {
   node.innerHTML = "";
   if (!message) return;
+  // O ícone é sempre um dos dois SVGs fixos abaixo (nunca monta com dado
+  // variável) — só `message` é dinâmico (pode vir de erro do servidor ou
+  // rede), por isso vai por `textContent`, nunca por innerHTML: uma
+  // resposta de erro maliciosa não pode virar HTML/JS executado aqui.
   const icon =
     kind === "err"
       ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>'
@@ -39,7 +43,10 @@ function setStatus(node, message, kind) {
         ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m22 4-10 10-3-3"/></svg>'
         : "";
   node.className = "status-msg" + (kind ? " " + kind : "");
-  node.innerHTML = icon + `<span>${message}</span>`;
+  node.innerHTML = icon;
+  const span = document.createElement("span");
+  span.textContent = message;
+  node.appendChild(span);
 }
 
 let rooms = [];
