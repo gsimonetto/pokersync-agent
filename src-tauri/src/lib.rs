@@ -151,18 +151,18 @@ fn start_google_login(app: AppHandle, state: State<AppState>) -> Result<(), Stri
         .map_err(|e| format!("Não consegui abrir o navegador: {e}"))
 }
 
-/// Extrai (access_token, refresh_token, state) de uma URL
-/// `radar-pokersync://auth?...` — usado tanto pelo handler automático de
-/// deep link quanto pelo comando `paste_login_link` (colar manual).
-fn parse_auth_deep_link(url: &url::Url) -> Option<(String, String, String)> {
+/// Extrai (code, state) de uma URL `radar-pokersync://auth?...` — usado
+/// tanto pelo handler automático de deep link quanto pelo comando
+/// `paste_login_link` (colar manual). `code` é um código de uso único
+/// (ver `auth::exchange_login_code`), não mais o token de sessão em si.
+fn parse_auth_deep_link(url: &url::Url) -> Option<(String, String)> {
     if url.scheme() != "radar-pokersync" || url.host_str() != Some("auth") {
         return None;
     }
     let params: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
-    let access_token = params.get("access_token")?.clone();
-    let refresh_token = params.get("refresh_token")?.clone();
+    let code = params.get("code")?.clone();
     let state = params.get("state").cloned().unwrap_or_default();
-    Some((access_token, refresh_token, state))
+    Some((code, state))
 }
 
 /// Caminho manual pro login com Google: quando o SO não sabe abrir
@@ -173,18 +173,19 @@ fn parse_auth_deep_link(url: &url::Url) -> Option<(String, String, String)> {
 #[tauri::command]
 async fn paste_login_link(app: AppHandle, link: String) -> Result<(), String> {
     let url = url::Url::parse(link.trim()).map_err(|_| "Link inválido — copie o link inteiro da página.".to_string())?;
-    let (access_token, refresh_token, state) =
+    let (code, state) =
         parse_auth_deep_link(&url).ok_or("Esse link não é um link de login do Radar PokerSync.".to_string())?;
-    complete_google_login(app, access_token, refresh_token, state).await;
+    complete_google_login(app, code, state).await;
     Ok(())
 }
 
 /// Chamado pelo handler de deep link (`run()`) quando
 /// `radar-pokersync://auth?...` volta do login com Google. Confere o
-/// nonce, resolve o email do token e salva a sessão — mesmo destino final
+/// nonce, troca o código de uso único pelos tokens reais
+/// (`auth::exchange_login_code`) e salva a sessão — mesmo destino final
 /// de `login()` (email/senha), só que assíncrono e sem senha nenhuma
 /// passando pelo agente.
-async fn complete_google_login(app: AppHandle, access_token: String, refresh_token: String, received_state: String) {
+async fn complete_google_login(app: AppHandle, code: String, received_state: String) {
     let state = app.state::<AppState>();
     let state_matches = {
         let mut pending = state.pending_google_state.lock().unwrap();
@@ -202,16 +203,26 @@ async fn complete_google_login(app: AppHandle, access_token: String, refresh_tok
         return;
     }
 
-    let email = auth::fetch_user_email(&access_token).await;
+    let base_url = state.config.lock().unwrap().base_url.clone();
+    let result = match auth::exchange_login_code(&base_url, &code).await {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = app.emit("google-login-result", serde_json::json!({ "ok": false, "error": e }));
+            return;
+        }
+    };
 
-    if let Err(e) = keychain::save(&Tokens { access_token, refresh_token }) {
+    if let Err(e) = keychain::save(&Tokens {
+        access_token: result.access_token,
+        refresh_token: result.refresh_token,
+    }) {
         let _ = app.emit("google-login-result", serde_json::json!({ "ok": false, "error": e }));
         return;
     }
 
     {
         let mut cfg = state.config.lock().unwrap();
-        cfg.user_email = email;
+        cfg.user_email = result.email;
         let _ = cfg.save(&state.config_path);
     }
 
@@ -555,7 +566,7 @@ pub fn run() {
             // sem o jogador precisar abrir a janela e clicar em nada.
             spawn_auto_sync(app.handle().clone());
 
-            // Login com Google: radar-pokersync://auth?access_token=...
+            // Login com Google: radar-pokersync://auth?code=...&state=...
             // volta aqui depois do navegador do sistema completar o OAuth
             // (ver start_google_login e app/agent-login no produto). Só
             // funciona quando o SO sabe abrir o esquema customizado — nem
@@ -574,12 +585,12 @@ pub fn run() {
             let deep_link_handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
-                    let Some((access_token, refresh_token, received_state)) = parse_auth_deep_link(&url) else {
+                    let Some((code, received_state)) = parse_auth_deep_link(&url) else {
                         continue;
                     };
                     let handle = deep_link_handle.clone();
                     tauri::async_runtime::spawn(async move {
-                        complete_google_login(handle, access_token, refresh_token, received_state).await;
+                        complete_google_login(handle, code, received_state).await;
                     });
                 }
             });
