@@ -106,12 +106,53 @@ fn decode_email_from_jwt(access_token: &str) -> Option<String> {
     serde_json::from_slice::<Claims>(&payload).ok()?.email
 }
 
-/// O deep link de volta do login com Google (ver `lib.rs`) só traz os
-/// tokens — busca o email aqui pra exibir "Conectado como ..." na UI,
-/// igual ao fluxo de email/senha. Tenta primeiro decodificar do próprio
-/// token (rápido, sem rede); só bate no GoTrue se por algum motivo o
-/// token não tiver o claim (não deveria acontecer com os tokens que o
-/// Supabase emite hoje, mas mais vale ter o caminho de volta).
+#[derive(Debug, Deserialize)]
+struct ExchangeCodeResponse {
+    access_token: String,
+    refresh_token: String,
+}
+
+/// Troca o código de uso único do login do agente (gerado em
+/// `app/auth/confirm` no produto quando o login com Google volta pro
+/// agente) pelos tokens de sessão reais. O deep link
+/// `radar-pokersync://auth?code=...&state=...` só traz esse código —
+/// nunca mais os tokens direto, que antes trafegavam pela URL/tela de
+/// "copiar link" (ver `app/agent-login/concluido` no produto e
+/// `app/api/agent/exchange-code/route.ts`). O código é de uso único e
+/// expira em minutos, então mesmo exposto (histórico do navegador,
+/// logs) não vale nada depois de trocado ou vencido.
+pub async fn exchange_login_code(base_url: &str, code: &str) -> Result<LoginResult, String> {
+    let client = reqwest::Client::new();
+    let url = format!("{base_url}/api/agent/exchange-code");
+    let resp = client
+        .post(url)
+        .json(&serde_json::json!({ "code": code }))
+        .send()
+        .await
+        .map_err(|e| format!("Falha de rede ao confirmar login: {e}"))?;
+
+    let status = resp.status();
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err("Código de login inválido ou expirado — tente entrar de novo.".to_string());
+    }
+
+    let parsed: ExchangeCodeResponse = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    let email = fetch_user_email(&parsed.access_token).await;
+    Ok(LoginResult {
+        access_token: parsed.access_token,
+        refresh_token: parsed.refresh_token,
+        email,
+    })
+}
+
+/// Busca o email do usuário a partir do access_token — usada tanto pelo
+/// login com Google (`exchange_login_code` acima) quanto como fallback
+/// caso o claim não venha no token. Tenta primeiro decodificar do
+/// próprio token (rápido, sem rede); só bate no GoTrue se por algum
+/// motivo o token não tiver o claim (não deveria acontecer com os
+/// tokens que o Supabase emite hoje, mas mais vale ter o caminho de
+/// volta).
 pub async fn fetch_user_email(access_token: &str) -> Option<String> {
     if let Some(email) = decode_email_from_jwt(access_token) {
         return Some(email);
