@@ -93,6 +93,15 @@
         </div>
       </div>
 
+      <!-- Banner de atualização disponível — some enquanto não há update
+           novo (ver checkForUpdate em app.js). Nunca instala sozinho: o
+           jogador pode estar no meio de uma sessão, então só baixa/reinicia
+           quando ele clicar. -->
+      <div id="update-banner" class="update-banner hidden">
+        <span id="update-banner-text"></span>
+        <button type="button" id="btn-update-install" class="btn btn-secondary btn-sm">Atualizar agora</button>
+      </div>
+
       <div class="value-block">
         <h2>O robô que garante que nenhuma mão fique de fora</h2>
         <p>
